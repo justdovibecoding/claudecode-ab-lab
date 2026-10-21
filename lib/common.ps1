@@ -381,6 +381,111 @@ function Get-Equivalence($Exp) {
     [pscustomobject]@{ Ok = ($issues.Count -eq 0); Issues = $issues; Details = $details }
 }
 
+# ---------- stream-json 해석(스킬·도구 사용 기록) ----------
+# claude -p --output-format stream-json --verbose 출력 한 줄이 이벤트 하나다.
+#   system/init      : 실제로 로드된 plugins(name, source, version), skills, agents, mcp_servers
+#   system/hook_*    : 훅 실행(SessionStart 훅이 넣는 문맥 포함)
+#   assistant        : 모델 응답. content 의 tool_use 가 도구 호출(Skill → input.skill, Agent/Task → input.subagent_type)
+#   result           : --output-format json 과 같은 최종 결과
+# user 이벤트(도구 결과)는 파일 내용 등으로 커서 읽지 않는다.
+
+function Read-ClaudeStream([string[]]$Lines) {
+    $init = $null; $result = $null; $firstContext = $null
+    $calls = @()   # @{ Tool; Kind(skill|agent|mcp|tool); Name }
+    $seen = @{}
+    $hookCount = 0; $hookChars = 0
+    foreach ($line in $Lines) {
+        if (-not $line -or $line[0] -ne '{' -or $line.StartsWith('{"type":"user"')) { continue }
+        try { $j = $line | ConvertFrom-Json } catch { continue }
+        if ($j.type -eq 'system' -and $j.subtype -eq 'init') { if (-not $init) { $init = $j } }
+        elseif ($j.type -eq 'system' -and $j.subtype -eq 'hook_response') {
+            $hookCount++
+            $out = "$($j.output)".Trim()
+            $ctx = $null
+            try { $ctx = ($out | ConvertFrom-Json).hookSpecificOutput.additionalContext } catch { }
+            if ($ctx) { $hookChars += "$ctx".Length }
+            elseif ($j.hook_event -in 'SessionStart', 'UserPromptSubmit' -and $out -and $out -ne '{}') { $hookChars += $out.Length }
+        }
+        elseif ($j.type -eq 'assistant') {
+            $u = $j.message.usage
+            # 첫 요청의 입력 전체(시스템 지시·도구·스킬 목록·지시문) = 상시 컨텍스트 비교용
+            if ($null -eq $firstContext -and -not $j.parent_tool_use_id -and $u) {
+                $firstContext = [int]$u.input_tokens + [int]$u.cache_creation_input_tokens + [int]$u.cache_read_input_tokens
+            }
+            foreach ($c in @($j.message.content)) {
+                if ($c.type -ne 'tool_use' -or $seen.ContainsKey("$($c.id)")) { continue }
+                $seen["$($c.id)"] = $true
+                $kind = 'tool'; $name = "$($c.name)"
+                if ($c.name -eq 'Skill' -and $c.input.skill) { $kind = 'skill'; $name = "$($c.input.skill)" }
+                elseif ($c.name -in 'Agent', 'Task' -and $c.input.subagent_type) { $kind = 'agent'; $name = "$($c.input.subagent_type)" }
+                elseif ($c.name -like 'mcp__*') { $kind = 'mcp' }
+                $calls += [pscustomobject]@{ Tool = "$($c.name)"; Kind = $kind; Name = $name }
+            }
+        }
+        elseif ($j.type -eq 'result') { $result = $j }
+    }
+    [pscustomobject]@{
+        Init = $init; Result = $result; FirstContext = $firstContext; Calls = $calls
+        HookCount = $hookCount; HookChars = $hookChars
+    }
+}
+
+# init 이벤트에서 로드 목록만 뽑는다(conditions.json·보고서용).
+function Get-InitSummary($Init) {
+    if (-not $Init) { return $null }
+    [ordered]@{
+        plugins = @($Init.plugins | Where-Object { $_ } | ForEach-Object {
+                [ordered]@{ name = "$($_.name)"; source = "$($_.source)"; version = "$($_.version)" } })
+        skills  = @($Init.skills | Where-Object { $_ } | ForEach-Object { "$_" })
+        agents  = @($Init.agents | Where-Object { $_ } | ForEach-Object { "$_" })
+        mcp     = @($Init.mcp_servers | Where-Object { $_ } | ForEach-Object { "$($_.name)" })
+    }
+}
+
+# 비교 대상 = B에서만 로드된 것(A init 과 B init 의 차이) + B 구성 기록의 이름.
+# 결과: @{ plugins; skills; agents; mcp } (이름 목록)
+function Get-StreamTargets($InitA, $InitB, $Manifest) {
+    $only = { param($b, $a) @($b | Where-Object { $_ -and $_ -notin @($a) } | Sort-Object -Unique) }
+    # 스크립트 블록 결과는 파이프로 풀리므로(원소 하나 → 값, 없음 → $null) @() 로 다시 배열로 만든다.
+    $t = [ordered]@{
+        plugins = @(& $only @($InitB.plugins | ForEach-Object { $_.name }) @($InitA.plugins | ForEach-Object { $_.name }))
+        skills  = @(& $only $InitB.skills $InitA.skills)
+        agents  = @(& $only $InitB.agents $InitA.agents)
+        mcp     = @(& $only $InitB.mcp $InitA.mcp)
+    }
+    foreach ($m in @($Manifest | Where-Object { $_ })) {
+        $n = "$($m.name)" -replace '@.*$', ''
+        if ($m.kind -in 'installed-plugin', 'local-plugin' -and $n -notin $t.plugins) { $t.plugins += $n }
+        if ($m.kind -eq 'local-skill' -and $n -notin $t.skills) { $t.skills += $n }
+    }
+    $t
+}
+
+# 도구 호출 하나가 비교 대상의 것인지. 플러그인 스킬·에이전트는 "<플러그인>:<이름>" 형식이다.
+function Test-TargetCall($Call, $Targets) {
+    if (-not $Targets) { return $false }
+    $plugin = if ($Call.Name -match '^([^:]+):') { $Matches[1] } else { $null }
+    switch ($Call.Kind) {
+        'skill' { return ($Call.Name -in $Targets.skills) -or ($plugin -and $plugin -in $Targets.plugins) }
+        'agent' { return ($Call.Name -in $Targets.agents) -or ($plugin -and $plugin -in $Targets.plugins) }
+        'mcp' {
+            # MCP 도구 이름은 mcp__<서버 이름(영문·숫자·_- 외는 _)>__<도구>
+            foreach ($s in @($Targets.mcp) + @($Targets.plugins | ForEach-Object { "plugin:$_" })) {
+                $san = "$s" -replace '[^A-Za-z0-9_-]', '_'
+                if ($Call.Tool -like "mcp__$($san)__*" -or $Call.Tool -like "mcp__$($san)_*__*") { return $true }
+            }
+            return $false
+        }
+    }
+    $false
+}
+
+# 호출 목록 → "이름×횟수; ..." (많은 순)
+function Format-CallCounts($Calls) {
+    @($Calls | Group-Object Name | Sort-Object @{ e = 'Count'; Descending = $true }, Name |
+        ForEach-Object { "$($_.Name)×$($_.Count)" }) -join '; '
+}
+
 # ---------- 품질 확인 명령 ----------
 
 # 작업 폴더에서 확인 명령(cmd.exe)을 실행한다. 결과: @{ Passed; ExitCode; TimedOut; Seconds; Output }

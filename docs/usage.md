@@ -271,7 +271,7 @@ prompts\01-task.B.md    README를 읽고 요약해줘 (superpowers 스킬을 사
 - 회차마다 A/B를 번갈아 실행합니다. 홀수 회차는 A→B, 짝수 회차는 B→A(순서 효과 완화).
 - 실행 직전마다 그쪽 작업 폴더를 `fixture\`로 초기화하고, 그 작업 폴더의 **자동 메모리**도 지웁니다
   (`conditions.json`의 `memoryReset: true`). 남겨 두면 2회차부터 이전 회차가 배운 내용을 안고 시작해 회차가 독립 표본이 아닙니다.
-- `claude -p --output-format json --permission-mode <모드> --model <모델> --strict-mcp-config --mcp-config <구성> [--plugin-dir ...] [--max-budget-usd N]`로 실행합니다.
+- `claude -p --output-format stream-json --verbose --permission-mode <모드> --model <모델> --strict-mcp-config --mcp-config <구성> [--plugin-dir ...] [--max-budget-usd N]`로 실행합니다.
 
 권한 모드(`-PermissionMode`):
 
@@ -289,15 +289,34 @@ A/B에 **같은 모드**를 쓰는 한에서 과제에 맞는 모드를 고르�
 
 | 파일 | 내용 |
 |---|---|
-| `conditions.json` | 실험, 지시문, 변형을 받은 쪽(`promptOverride`), 회차, 모델, 권한 모드, 예산 한도, B 구성(플러그인·스킬·설치 여부·MCP·`bManifest`), 확인 명령(`check`), A/B 동등성(`equivalence`), Claude Code 버전, 시작 시각 |
+| `conditions.json` | 실험, 지시문, 변형을 받은 쪽(`promptOverride`), 회차, 모델, 권한 모드, 예산 한도, B 구성(플러그인·스킬·설치 여부·MCP·`bManifest`), 확인 명령(`check`), A/B 동등성(`equivalence`), Claude Code 버전, 시작 시각, 쪽별 실제 로드 목록(`loaded`), 비교 대상(`targets`) |
 | `A-1-check.txt` … | 확인 명령의 결과와 출력(확인 명령이 있을 때) |
 | `judgments.json` | 블라인드 판정(섞인 순서와 답안별 판정·메모). 앱에서 판정하면 생김 |
 | `prompt.md`, `prompt.A.md`, `prompt.B.md` | 사용한 지시문 사본(변형이 있을 때만 쪽별 파일) |
-| `A-1.json` … | `claude -p` JSON 원본 |
+| `A-1.json` … | 최종 결과(`--output-format json` 과 같은 result 이벤트) |
+| `A-1-stream.jsonl` … | `stream-json` 원본(모든 이벤트: init, 훅, 응답, 도구 호출·결과) |
+| `A-1-tools.json` … | 첫 요청 컨텍스트 토큰, 훅 실행 수·주입 문맥 길이, 도구 호출 목록(종류·이름·비교 대상 여부) |
 | `A-1-result.md` … | 최종 응답 텍스트 |
 | `A-1-changes.txt` … | 실습 원본 대비 바뀐 파일(`A` 추가 / `M` 수정 / `D` 삭제, `.git` 제외) |
 | `A-1-work\` … | 실행 직후 작업 폴더 사본 |
-| `summary.csv` | 실행별 Exit, IsError, Subtype, CostUSD, Turns, Seconds, 토큰, ChangedFiles, SessionId |
+| `summary.csv` | 실행별 Exit, IsError, Subtype, CostUSD, Turns, Seconds, 토큰, FirstContextTokens, ChangedFiles, CheckPassed, ToolCalls, SkillCalls, TargetCalls, Skills, HookContextChars, SessionId |
+
+### 스킬·도구 사용 기록
+
+"B가 나아졌다"가 **정말 비교 대상 덕분인지** 보려고, 매 실행의 `stream-json` 이벤트에서 다음을 뽑습니다.
+
+| 항목 | 출처 | 쓰임 |
+|---|---|---|
+| 실제 로드 목록(`loaded`) | 첫 `init` 이벤트의 plugins·skills·agents·mcp_servers | `--plugin-dir`·`skills\`·`/plugin` 설치가 실제로 로드됐는지 증명 |
+| 비교 대상(`targets`) | B 로드 목록 − A 로드 목록 (+ B 구성 기록 이름) | 호출을 "대상"과 "기본 기능"으로 나눔 |
+| 대상 호출(`TargetCalls`) | `Skill`(input.skill), `Agent`/`Task`(subagent_type), `mcp__…` 호출 중 비교 대상의 것 | 대상 호출 회차 = 비교 대상이 실제로 쓰인 실행 비율 |
+| 첫 요청 컨텍스트(`FirstContextTokens`) | 첫 응답의 입력+캐시 생성+캐시 읽기 토큰 | A/B 차이 = 비교 대상의 **상시 비용**(스킬 목록, 훅 문맥 등) |
+| 훅 문맥(`HookContextChars`) | 훅 응답의 additionalContext 길이 | SessionStart 훅으로 지시를 주입하는 플러그인(예: superpowers) 확인 |
+
+- 보고서의 "스킬·도구 사용" 표와 호출 내역(굵은 글씨 = 비교 대상)에 나옵니다.
+- 대상 호출 회차가 낮으면 B의 차이는 비교 대상 때문이 아닐 가능성이 큽니다. 호출 문구 변형(`.B.md`)을 검토하세요.
+- 지시문에 `/스킬이름`처럼 직접 쓴 슬래시 명령은 도구 호출이 아니라서 세지 않습니다.
+- B에만 로드된 것이 없으면 측정 끝에 경고하고 보고서에도 표시합니다.
 
 ---
 

@@ -113,6 +113,7 @@
 - 지시문 옆에 `<이름>.A.md` / `<이름>.B.md`가 있으면 그쪽에는 변형을 보내고 `conditions.json`의 `promptOverride`에 기록합니다.
 - 시작할 때 A/B 동등성을 점검해 `conditions.json`의 `equivalence`에 남기고, 다르면 경고합니다(측정은 계속).
 - `experiment.json`의 `check.command`가 있으면 매 실행 뒤 작업 폴더에서 실행해 `CheckPassed`와 `<쪽>-<회차>-check.txt`로 기록합니다.
+- `--output-format stream-json --verbose`로 실행해 실제 로드 목록과 스킬·에이전트·MCP 호출, 첫 요청 컨텍스트를 기록합니다(`*-stream.jsonl`, `*-tools.json`, `conditions.json`의 `loaded`·`targets`).
 - 결과 파일 목록은 [usage.md 6절](usage.md#6-반복-측정-근거용)을 보세요.
 
 ## report.ps1
@@ -123,6 +124,7 @@
 
 `results\*\summary.csv`와 `conditions.json`, `judgments.json`을 모아 `REPORT.md`를 씁니다(덮어씀).
 측정마다 B 구성 기록(버전·커밋), 지시문 변형, A/B 동등성 경고, 확인 명령을 적고, 표에 "확인 통과"와 "사람 판정(통과·부분/판정)" 열을 둡니다.
+`stream-json`으로 측정한 결과에는 "스킬·도구 사용" 표(대상 호출 회차, 첫 요청 컨텍스트 차이, 호출 내역)가 붙습니다.
 
 ## b-config.ps1
 
@@ -175,4 +177,6 @@
 | `Get-ProjectSlug` / `Get-ProjectMemoryCount` / `Clear-ProjectMemory` | 작업 폴더별 기록 폴더 이름, 자동 메모리 개수·삭제 |
 | `Get-ProjectEntry` | `.claude.json`의 작업 폴더별 항목 |
 | `Get-ConfigExtras` | 설정 폴더에 직접 넣은 파일(CLAUDE.md, agents, commands, output-styles, skills)의 해시 |
+| `Read-ClaudeStream` | `stream-json` 출력 → init·결과·첫 요청 컨텍스트·도구 호출·훅 문맥 |
+| `Get-InitSummary` / `Get-StreamTargets` / `Test-TargetCall` | 로드 목록 요약, B에만 있는 비교 대상, 호출이 대상의 것인지 |
 | `Invoke-CheckCommand` | 작업 폴더에서 확인 명령 실행(제한 시간, 종료 코드 0 = 통과) |

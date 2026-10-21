@@ -19,6 +19,61 @@ function Format-Delta($a, $b) {
     '{0}{1:N0}%' -f ($(if ($d -ge 0) { '+' } else { '' })), $d
 }
 
+# 스킬·도구 사용(stream-json 으로 측정한 결과만. 예전 json 결과는 건너뜀)
+function Get-UsageSection($RunDir, $Cond, $Rows) {
+    if (-not ($Rows | Where-Object { $_.PSObject.Properties['ToolCalls'] -and $_.ToolCalls -ne '' })) { return @() }
+    $out = @('### 스킬·도구 사용', '')
+    $tg = $Cond.targets
+    if ($Cond.loaded -and $Cond.loaded.B) {
+        $names = @(@($tg.plugins) + @($tg.agents) + @($tg.mcp) | Where-Object { $_ })
+        $nSkills = @($tg.skills | Where-Object { $_ }).Count
+        if ($names.Count -or $nSkills) {
+            $out += "- 실제 로드 확인(init): B에만 있는 것 — 플러그인 [$(@($tg.plugins) -join ', ')] · 스킬 $($nSkills)개 · 에이전트 [$(@($tg.agents) -join ', ')] · MCP [$(@($tg.mcp) -join ', ')]"
+        } else {
+            $out += '- **B에만 로드된 것이 없음**: 비교 대상이 실제로 로드되지 않았을 수 있습니다(conditions.json 의 loaded 확인).'
+        }
+    }
+    $out += ''
+    $out += '| 쪽 | 대상 호출 회차 | 평균 대상 호출 | 평균 스킬 호출 | 평균 도구 호출 | 평균 첫 요청 컨텍스트(토큰) | 평균 훅 문맥(글자) |'
+    $out += '|---|---|---|---|---|---|---|'
+    $ctx = @{}
+    foreach ($side in 'A', 'B') {
+        $all = @($Rows | Where-Object Side -eq $side)
+        if (-not $all.Count) { continue }
+        $hit = if ($tg) { "$(@($all | Where-Object { $_.TargetCalls -ne '' -and [int]$_.TargetCalls -gt 0 }).Count)/$($all.Count)" } else { '-' }
+        $ctx[$side] = Get-Avg $all FirstContextTokens
+        $out += "| $side | $hit | $(Format-Num (Get-Avg $all TargetCalls) 1) | $(Format-Num (Get-Avg $all SkillCalls) 1) | $(Format-Num (Get-Avg $all ToolCalls) 1) | $(Format-Num $ctx[$side] 0) | $(Format-Num (Get-Avg $all HookContextChars) 0) |"
+    }
+    if ($ctx.ContainsKey('A') -and $ctx.ContainsKey('B') -and $null -ne $ctx.A -and $null -ne $ctx.B) {
+        $out += "| 차이 | | | | | $('{0:+#,0;-#,0;0}' -f ($ctx.B - $ctx.A)) ($(Format-Delta $ctx.A $ctx.B)) | |"
+    }
+    $out += ''
+    $out += '첫 요청 컨텍스트 = 첫 요청에 들어간 입력 전체(시스템 지시·도구·스킬 목록·훅 문맥·지시문). A/B 차이가 비교 대상의 상시 비용이다. 호출 내역의 굵은 글씨가 비교 대상.'
+    # 쪽별 스킬·에이전트 호출 내역(실행 몇 번에서 몇 회)
+    foreach ($side in 'A', 'B') {
+        $per = @{}
+        foreach ($row in @($Rows | Where-Object Side -eq $side)) {
+            $f = Join-Path $RunDir.FullName "$side-$($row.Run)-tools.json"
+            if (-not (Test-Path $f)) { continue }
+            $t = Get-Content $f -Raw -Encoding UTF8 | ConvertFrom-Json
+            foreach ($g in @($t.calls | Where-Object { $_.kind -in 'skill', 'agent' } | Group-Object name)) {
+                if (-not $per.ContainsKey($g.Name)) { $per[$g.Name] = @{ Calls = 0; Runs = 0; Target = $false } }
+                $per[$g.Name].Calls += $g.Count
+                $per[$g.Name].Runs += 1
+                if (@($g.Group | Where-Object target).Count) { $per[$g.Name].Target = $true }
+            }
+        }
+        if ($per.Count) {
+            $items = $per.GetEnumerator() | Sort-Object { -$_.Value.Calls }, Name | ForEach-Object {
+                "$(if ($_.Value.Target) { '**' + $_.Name + '**' } else { $_.Name }) ×$($_.Value.Calls)($($_.Value.Runs)회)"
+            }
+            $out += "- $side 스킬·에이전트 호출: $($items -join ', ')"
+        }
+    }
+    $out += ''
+    $out
+}
+
 $lines = @(
     "# $Exp 비교 결과"
     ''
@@ -81,6 +136,7 @@ foreach ($r in $runs) {
         $lines += "| 차이 | | | | $(Format-Delta $A.Cost $B.Cost) | $(Format-Delta $A.Turns $B.Turns) | $(Format-Delta $A.Sec $B.Sec) | $(Format-Delta $A.Out $B.Out) | $(Format-Delta $A.Chg $B.Chg) |"
     }
     $lines += ''
+    $lines += Get-UsageSection $r $cond $rows
     $lines += "실행별 결과물: ``results\$($r.Name)\<쪽>-<회차>-work\`` · 변경 목록 ``*-changes.txt`` · 최종 응답 ``*-result.md`` · 확인 결과 ``*-check.txt``"
     $lines += ''
 }

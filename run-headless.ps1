@@ -66,6 +66,8 @@ $cond = [ordered]@{
     bManifest      = @(Get-BManifest $e)
     check          = $e.Meta.check
     equivalence    = $null
+    loaded         = $null   # 측정 뒤 채움: 쪽별로 실제 로드된 플러그인·스킬·에이전트·MCP(init 이벤트)
+    targets        = $null   # 측정 뒤 채움: 비교 대상 = B에서만 로드된 것
 }
 
 # A/B 동등성(계정·계정 스킬·설정). 다르면 경고하고 조건에 남긴다(측정은 계속).
@@ -84,6 +86,7 @@ $oldConfig = $env:CLAUDE_CONFIG_DIR
 $oldOutputEncoding = $OutputEncoding
 $oldConsoleEncoding = [Console]::OutputEncoding
 $rows = @()
+$streams = @()
 try {
     # PowerShell 5.1은 파이프 기본 인코딩이 ASCII라서 한국어 지시문이 깨진다.
     $OutputEncoding = $Utf8NoBom
@@ -95,7 +98,8 @@ try {
         foreach ($side in $order) {
             Reset-Work $e @($side)
             $l = Get-SideLaunch $e $side $Model
-            $cliArgs = @('-p', '--output-format', 'json', '--permission-mode', $PermissionMode) + $l.CliArgs
+            # stream-json: 최종 결과 말고도 로드 목록(init)과 도구·스킬 호출을 남긴다(--verbose 필수).
+            $cliArgs = @('-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', $PermissionMode) + $l.CliArgs
             if ($MaxBudgetUsd -gt 0) { $cliArgs += @('--max-budget-usd', $MaxBudgetUsd) }
 
             $env:CLAUDE_CONFIG_DIR = $l.Config
@@ -107,7 +111,11 @@ try {
             Pop-Location
 
             $base = Join-Path $outDir "$side-$i"
-            Write-Utf8NoBom "$base.json" ($raw -join "`n")
+            $raw = @($raw | ForEach-Object { "$_" })
+            Write-Utf8NoBom "$base-stream.jsonl" (($raw -join "`n") + "`n")
+            $st = Read-ClaudeStream $raw
+            # A-1.json 은 예전 --output-format json 결과와 같은 최종 결과(result 이벤트)만 둔다.
+            Write-Utf8NoBom "$base.json" $(if ($st.Result) { $st.Result | ConvertTo-Json -Depth 20 } else { '' })
             # 작업 결과물과 fixture 대비 변경 목록을 남긴다.
             Invoke-Mirror $l.Work "$base-work"
             $changes = Compare-Tree $fixture $l.Work
@@ -127,11 +135,17 @@ try {
             $row = [ordered]@{
                 Side = $side; Run = $i; Exit = $exit; IsError = $null; Subtype = $null
                 CostUSD = $null; Turns = $null; Seconds = $null
-                InputTokens = $null; OutputTokens = $null; CacheReadTokens = $null
-                ChangedFiles = $changes.Count; CheckPassed = $checkPassed; SessionId = $null
+                InputTokens = $null; OutputTokens = $null; CacheReadTokens = $null; CacheCreationTokens = $null
+                FirstContextTokens = $st.FirstContext
+                ChangedFiles = $changes.Count; CheckPassed = $checkPassed
+                ToolCalls = @($st.Calls).Count; SkillCalls = @($st.Calls | Where-Object Kind -eq 'skill').Count
+                TargetCalls = $null; Skills = Format-CallCounts @($st.Calls | Where-Object Kind -in 'skill', 'agent')
+                HookContextChars = $st.HookChars; SessionId = $null
             }
+            $streams += [pscustomobject]@{ Base = $base; Side = $side; Stream = $st; Row = $row }
             try {
-                $r = ($raw -join "`n") | ConvertFrom-Json
+                $r = $st.Result
+                if (-not $r) { throw '결과 이벤트 없음' }
                 $row.IsError = $r.is_error
                 $row.Subtype = $r.subtype
                 $row.CostUSD = $r.total_cost_usd
@@ -142,13 +156,13 @@ try {
                     $row.InputTokens = $r.usage.input_tokens
                     $row.OutputTokens = $r.usage.output_tokens
                     $row.CacheReadTokens = $r.usage.cache_read_input_tokens
+                    $row.CacheCreationTokens = $r.usage.cache_creation_input_tokens
                 }
                 if ($r.result) { Write-Utf8NoBom "$base-result.md" $r.result }
             } catch {
                 $row.IsError = $true
-                $row.Subtype = 'JSON 해석 실패'
+                $row.Subtype = '결과 해석 실패'
             }
-            $rows += [pscustomobject]$row
         }
     }
 } finally {
@@ -157,8 +171,31 @@ try {
     [Console]::OutputEncoding = $oldConsoleEncoding
 }
 
+# 비교 대상(B에서만 로드된 플러그인·스킬·에이전트·MCP)을 정하고, 실행마다 대상 호출을 센다.
+$initOf = { param($s) Get-InitSummary (@($streams | Where-Object { $_.Side -eq $s -and $_.Stream.Init }) | Select-Object -First 1).Stream.Init }
+$loaded = [ordered]@{ A = & $initOf 'A'; B = & $initOf 'B' }
+$targets = if ($loaded.A -and $loaded.B) { Get-StreamTargets $loaded.A $loaded.B $cond.bManifest } else { $null }
+foreach ($s in $streams) {
+    $hits = @($s.Stream.Calls | Where-Object { Test-TargetCall $_ $targets })
+    $s.Row.TargetCalls = if ($targets) { $hits.Count } else { $null }
+    $tools = [ordered]@{
+        firstContextTokens = $s.Stream.FirstContext
+        hooks = [ordered]@{ count = $s.Stream.HookCount; contextChars = $s.Stream.HookChars }
+        calls = @($s.Stream.Calls | ForEach-Object {
+                [ordered]@{ tool = $_.Tool; kind = $_.Kind; name = $_.Name; target = [bool](Test-TargetCall $_ $targets) } })
+    }
+    Write-Utf8NoBom "$($s.Base)-tools.json" ($tools | ConvertTo-Json -Depth 6)
+    $rows += [pscustomobject]$s.Row
+}
+$cond.loaded = $loaded
+$cond.targets = $targets
+Write-Utf8NoBom (Join-Path $outDir 'conditions.json') ($cond | ConvertTo-Json -Depth 6)
+if ($loaded.B -and $targets -and -not ($targets.plugins.Count + $targets.skills.Count + $targets.agents.Count + $targets.mcp.Count)) {
+    Write-Warning 'B에서만 로드된 비교 대상이 없습니다. B 구성이 실제로 로드되는지 확인하세요(conditions.json 의 loaded).'
+}
+
 $rows | Export-Csv (Join-Path $outDir 'summary.csv') -NoTypeInformation -Encoding UTF8
-$rows | Format-Table Side, Run, Exit, IsError, CostUSD, Turns, Seconds, OutputTokens, ChangedFiles, CheckPassed -AutoSize
+$rows | Format-Table Side, Run, Exit, IsError, CostUSD, Turns, Seconds, OutputTokens, ChangedFiles, CheckPassed, TargetCalls -AutoSize
 
 Write-Host '쪽별 평균(오류 제외):'
 $rows | Where-Object { -not $_.IsError } | Group-Object Side | ForEach-Object {
@@ -171,6 +208,7 @@ $rows | Where-Object { -not $_.IsError } | Group-Object Side | ForEach-Object {
         AvgOutTokens = [math]::Round(($_.Group | Measure-Object OutputTokens -Average).Average, 0)
         AvgChanged   = [math]::Round(($_.Group | Measure-Object ChangedFiles -Average).Average, 1)
         CheckPassed  = if ($checkCmd) { "$(@($_.Group | Where-Object CheckPassed).Count)/$($_.Count)" } else { '-' }
+        TargetRuns   = if ($targets) { "$(@($_.Group | Where-Object { $_.TargetCalls -gt 0 }).Count)/$($_.Count)" } else { '-' }
     }
 } | Format-Table -AutoSize
 if (-not $eq.Ok) { Write-Warning 'A/B 동등성 경고가 있었습니다. conditions.json 과 보고서에 기록됨.' }
