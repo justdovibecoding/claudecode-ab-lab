@@ -42,6 +42,10 @@ function Get-Criteria($Meta) {
 
 function Read-Run($Dir) {
     $cond = Get-Content (Join-Path $Dir.FullName 'conditions.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+    # 예전 측정은 측정 전 점검만 기록돼 있다. 같은 규칙으로 init 기준 판단을 적용한다(원문은 preRunIssues).
+    if ($cond.equivalence -and -not $cond.equivalence.preRunIssues -and "$($cond.mode)" -ne 'AA' -and $cond.loaded) {
+        $cond.equivalence = [pscustomobject](Resolve-EquivalenceWithInit $cond.equivalence $cond.loaded.A $cond.loaded.B)
+    }
     $rows = @(Import-Csv (Join-Path $Dir.FullName 'summary.csv'))
     # 사람 판정(judgments.json, 앱의 결과 화면에서 블라인드로 기록)
     $judged = @{}
@@ -350,6 +354,8 @@ foreach ($run in $runs) {
     }
     if ($cond.equivalence -and -not $cond.equivalence.ok) {
         $lines += "- **A/B 동등성 경고**: $(@($cond.equivalence.issues) -join ' / ')"
+    } elseif ($cond.equivalence -and @($cond.equivalence.preRunIssues | Where-Object { $_ }).Count) {
+        $lines += '- A/B 동등성: 측정 전 점검의 경고는 실제 로드 목록(init)으로 확인한 결과 해소됨(B 계정 스킬은 첫 실행 때 동기화)'
     }
     if ($cond.check -and $cond.check.command) { $lines += "- 확인 명령: ``$($cond.check.command)``" }
 

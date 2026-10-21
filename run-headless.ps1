@@ -203,6 +203,12 @@ foreach ($s in $streams) {
 }
 $cond.loaded = $loaded
 $cond.targets = $targets
+if ($Mode -eq 'AB') {
+    $cond.equivalence = Resolve-EquivalenceWithInit $cond.equivalence $loaded.A $loaded.B
+    if ($cond.equivalence.ok -and @($cond.equivalence.preRunIssues | Where-Object { $_ }).Count) {
+        Write-Host 'A/B 동등성: 측정 전 경고는 실제 로드 목록(init)으로 확인한 결과 해소됨(B 계정 스킬이 첫 실행 때 동기화됨).'
+    }
+}
 Write-Utf8NoBom (Join-Path $outDir 'conditions.json') ($cond | ConvertTo-Json -Depth 6)
 if ($Mode -eq 'AB' -and $loaded.B -and $targets -and -not ($targets.plugins.Count + $targets.skills.Count + $targets.agents.Count + $targets.mcp.Count)) {
     Write-Warning 'B에서만 로드된 비교 대상이 없습니다. B 구성이 실제로 로드되는지 확인하세요(conditions.json 의 loaded).'

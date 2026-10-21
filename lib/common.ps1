@@ -461,6 +461,20 @@ function Get-StreamTargets($InitA, $InitB, $Manifest) {
     $t
 }
 
+# 측정 전 동등성 점검을 실제 로드 목록(init)으로 바로잡는다.
+# B 설정 폴더의 계정 스킬은 B를 처음 실행할 때 동기화되므로, 새 실험의 첫 측정 전에는 synced\ 가 비어
+# "계정 스킬 목록이 다름" 거짓 경고가 난다. 측정 뒤에는 init 이 진짜 근거다:
+# A에서 로드됐는데 B에서 빠진 스킬이 있을 때만 차이로 본다(B에만 있는 것은 비교 대상).
+# 결과: @{ ok; issues; preRunIssues(측정 전 점검 원문) }
+function Resolve-EquivalenceWithInit($Equivalence, $InitA, $InitB) {
+    $pre = @($Equivalence.issues | Where-Object { $_ })
+    if (-not ($InitA -and $InitB)) { return $Equivalence }
+    $issues = @($pre | Where-Object { $_ -notlike '계정 스킬 목록이 다름*' })
+    $missing = @($InitA.skills | Where-Object { $_ -and $_ -notin @($InitB.skills) } | Sort-Object -Unique)
+    if ($missing.Count) { $issues += "A에서 로드된 스킬이 B에서 빠짐(init): $($missing -join ', ')" }
+    [ordered]@{ ok = -not $issues.Count; issues = @($issues); preRunIssues = $pre }
+}
+
 # 도구 호출 하나가 비교 대상의 것인지. 플러그인 스킬·에이전트는 "<플러그인>:<이름>" 형식이다.
 function Test-TargetCall($Call, $Targets) {
     if (-not $Targets) { return $false }
@@ -489,6 +503,15 @@ function Format-CallCounts($Calls) {
 # ---------- 품질 확인 명령 ----------
 
 # 작업 폴더에서 확인 명령(cmd.exe)을 실행한다. 결과: @{ Passed; ExitCode; TimedOut; Seconds; Output }
+# 명령 출력 파일 읽기. node·npm 은 UTF-8, cmd.exe 자체 메시지는 시스템 코드 페이지(CP949)로 쓰므로
+# 올바른 UTF-8이면 UTF-8로, 아니면 시스템 기본 인코딩으로 읽는다.
+function Read-CommandOutput([string]$Path) {
+    $bytes = [IO.File]::ReadAllBytes($Path)
+    if (-not $bytes.Length) { return '' }
+    try { (New-Object Text.UTF8Encoding($false, $true)).GetString($bytes) }
+    catch { [Text.Encoding]::Default.GetString($bytes) }
+}
+
 function Invoke-CheckCommand([string]$WorkDir, [string]$Command, [int]$TimeoutSec = 600) {
     $out = [IO.Path]::GetTempFileName()
     $err = [IO.Path]::GetTempFileName()
@@ -500,7 +523,7 @@ function Invoke-CheckCommand([string]$WorkDir, [string]$Command, [int]$TimeoutSe
         $timedOut = -not $p.WaitForExit($TimeoutSec * 1000)
         if ($timedOut) { & taskkill /PID $p.Id /T /F 2>&1 | Out-Null; $p.WaitForExit(5000) | Out-Null }
         $code = if ($timedOut) { $null } else { $p.ExitCode }
-        $text = ((Get-Content $out -Raw -Encoding Default) + (Get-Content $err -Raw -Encoding Default))
+        $text = (Read-CommandOutput $out) + (Read-CommandOutput $err)
         [pscustomobject]@{
             Passed = (-not $timedOut) -and ($code -eq 0); ExitCode = $code; TimedOut = $timedOut
             Seconds = [math]::Round($sw.Elapsed.TotalSeconds, 1); Output = "$text"

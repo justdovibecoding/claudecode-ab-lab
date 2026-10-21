@@ -94,6 +94,8 @@ robocopy 종료 코드 8 이상은 실패입니다. 작업 폴더의 파일이 �
 | 증상 | 원인과 해결 |
 |---|---|
 | `.\app.ps1`에서 `npm install` 실패 | Node.js 20 이상 설치 확인. 회사 프록시 환경이면 npm 프록시 설정 |
+| `Start-Process : The system cannot find the file specified` | Electron 45부터 `npm install`이 실행 파일을 받지 않음. 지금의 `app.ps1`은 `install.js`로 받음. 그래도 안 되면 `node app\node_modules\electron\install.js` 직접 실행(인터넷 필요) |
+| npm 11 `install-scripts ... node-pty` 경고 | 무시해도 됨. node-pty는 함께 든 Windows용 미리 빌드된 파일을 씀(빌드 스크립트 불필요) |
 | 왼쪽 아래 "claude: 찾지 못함" | npm/네이티브 기본 위치에 `claude.exe`가 없음. `CC_AB_CLAUDE` 환경 변수에 경로 지정 후 실행 |
 | "A 로그인/B 로그인"을 눌러도 창이 안 보임 | 새 PowerShell 창이 다른 창 뒤에 열렸을 수 있음(작업 표시줄 확인). 안 되면 `.\login.ps1 [-Exp 이름]`을 직접 실행 |
 | 세션 시작 직후 터미널이 `[프로세스 종료: 1]` | 폴더 신뢰 확인에서 기본값 "No, exit"가 선택됨. 아래 화살표로 "Yes"를 고른 뒤 Enter |
