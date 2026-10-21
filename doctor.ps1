@@ -49,6 +49,11 @@ else { Write-Check 오류 'claude 명령을 찾을 수 없음 (Claude Code 설�
 if (Get-Command wt -ErrorAction SilentlyContinue) { Write-Check OK 'Windows Terminal(wt) 있음' }
 else { Write-Check 정보 'Windows Terminal(wt) 없음 - open-both.ps1 은 창 2개로 띄움' }
 
+# ffmpeg (GUI 앱 녹화를 mp4 로 바꿀 때, 없으면 webm 으로만 저장)
+$ffmpeg = if ($env:CC_AB_FFMPEG -and (Test-Path $env:CC_AB_FFMPEG)) { $env:CC_AB_FFMPEG } else { (Get-Command ffmpeg -ErrorAction SilentlyContinue).Source }
+if ($ffmpeg) { Write-Check OK "ffmpeg 있음 - 앱 녹화를 mp4 로 변환 ($ffmpeg)" }
+else { Write-Check 정보 'ffmpeg 없음 - 앱 녹화는 webm 으로만 저장(winget install Gyan.FFmpeg 또는 CC_AB_FFMPEG 로 지정)' }
+
 # 관리형 설정(모든 실행에 강제 적용됨)
 $managed = 'C:\Program Files\ClaudeCode\managed-settings.json'
 if (Test-Path $managed) { Write-Check 주의 "관리형 설정이 있음 - A/B 모두에 적용됨: $managed" }

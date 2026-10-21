@@ -10,6 +10,7 @@ const { psQuote, buildPsArgs } = require('../src/main/powershell');
 const { resolveClaude } = require('../src/main/claude-resolve');
 const lab = require('../src/main/lab');
 const J = require('../src/shared/judge');
+const M = require('../src/main/media');
 
 // 시험용 고정 난수
 function seq(values) {
@@ -178,9 +179,94 @@ test('실험 목록과 지시문(변형 포함) 읽기, 세션 기록', () => {
   const s = lab.createSession(exp, { experiment: 'demo' });
   s.appendOutput('A', 'abc');
   s.logTurn({ sentA: 'x', sentB: 'y' });
+  s.appendMarker({ kind: 'send', t: 1.5 });
   s.updateMeta({ endedAt: 'now' });
+  assert.equal(JSON.parse(fs.readFileSync(path.join(s.dir, 'markers.jsonl'), 'utf8')).kind, 'send');
   assert.equal(fs.readFileSync(path.join(s.dir, 'A.log'), 'utf8'), 'abc');
   assert.equal(JSON.parse(fs.readFileSync(path.join(s.dir, 'turns.jsonl'), 'utf8')).sentB, 'y');
   assert.equal(JSON.parse(fs.readFileSync(path.join(s.dir, 'session.json'), 'utf8')).endedAt, 'now');
   fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('계정 정보 가리기: 낱말 목록, 조각 경계, 한글 폭', () => {
+  const words = M.redactWords([
+    { email: 'tester@example.com', orgName: "tester@example.com's Organization" },
+    { email: 'tester@example.com', orgName: '한글조직' },
+    null,
+  ]);
+  assert.deepEqual(words, ["tester@example.com's Organization", 'tester@example.com', 'tester', '한글조직']);
+  assert.equal(M.maskWord('ab한'), '****');
+
+  const r = M.createRedactor(words);
+  // 한 조각 안
+  assert.equal(r.push('hi tester@example.com!'), 'hi ******************!');
+  // 조각 경계에 걸친 경우: 앞부분일 수 있는 꼬리는 잡아 뒀다가 다음 조각과 합쳐 가린다
+  let out = r.push('login: test');
+  assert.equal(out, 'login: ');
+  out += r.push('er@example.com done');
+  assert.equal(out, 'login: ****************** done');
+  // 이메일이 조각 경계에서 잘려도 앞부분(tester)만 따로 가려지지 않는다
+  assert.equal(r.push('done. tester@exa'), 'done. ');
+  assert.equal(r.push('mple.com!'), '******************!');
+  // 잠시 출력이 없어 flush 하면 잡아 둔 꼬리도 가릴 수 있는 만큼 가려서 내보낸다
+  assert.equal(r.push('x tester@ex'), 'x ');
+  assert.equal(r.flush(), '******@ex');
+  // 낱말이 아니면 flush 로 그대로 나온다
+  assert.equal(r.push('x te'), 'x ');
+  assert.equal(r.flush(), 'te');
+  assert.equal(r.flush(), '');
+  // 한글 조직 이름은 화면 폭(2칸)에 맞춰 ** 로
+  assert.equal(r.push('[한글조직]'), '[********]');
+  // 가릴 낱말이 없으면 그대로
+  const none = M.createRedactor([]);
+  assert.equal(none.active, false);
+  assert.equal(none.push('tester@example.com'), 'tester@example.com');
+});
+
+test('유튜브 챕터: 0:00 시작, 10초 안의 표시는 합침, 3개 이상이어야 유효', () => {
+  const c = M.buildChapters([
+    { kind: 'send', rec: 12.4, label: '지시문 전송(A·B): 01-task' },
+    { kind: 'shot', rec: 13, label: 'send' }, // 캡처는 챕터가 아님
+    { kind: 'done', rec: 15, label: 'A 멈춤' }, // 10초 안이라 빠짐
+    { kind: 'done', rec: 95, label: 'B  멈춤 · 1:22 경과' },
+    { kind: 'manual', rec: 3725, label: '결과 비교' },
+    { kind: 'send', rec: null, label: '녹화 전' },
+  ]);
+  assert.deepEqual(c.lines, ['0:00 시작', '0:12 지시문 전송(A·B): 01-task', '1:35 B 멈춤 · 1:22 경과', '1:02:05 결과 비교']);
+  assert.equal(c.valid, true);
+  assert.equal(c.dropped, 1);
+  assert.equal(M.buildChapters([{ kind: 'send', rec: 30, label: 'x' }]).valid, false);
+  // 녹화 직후(10초 안) 전송은 0:00 챕터 이름이 된다
+  const early = M.buildChapters([{ kind: 'send', rec: 2, label: '전송' }, { kind: 'done', rec: 5, label: 'A 멈춤' }, { kind: 'done', rec: 40, label: 'B 멈춤' }]);
+  assert.deepEqual(early.lines, ['0:00 전송', '0:40 B 멈춤']);
+  assert.equal(early.dropped, 1);
+  assert.equal(M.formatClock(59.9), '0:59');
+});
+
+test('ffmpeg 찾기와 mp4 변환 인자', () => {
+  const exists = (p) => p === 'C:\\ff\\ffmpeg.exe';
+  assert.equal(M.resolveFfmpeg({ env: { CC_AB_FFMPEG: 'C:\\ff\\ffmpeg.exe' }, exists, where: () => [] }), 'C:\\ff\\ffmpeg.exe');
+  assert.equal(M.resolveFfmpeg({ env: {}, exists, where: () => ['C:\\x\\ffmpeg', 'C:\\x\\ffmpeg.exe'] }), 'C:\\x\\ffmpeg.exe');
+  assert.equal(M.resolveFfmpeg({ env: {}, exists, where: () => [] }), null);
+  const args = M.mp4Args('in.webm', 'out.mp4');
+  assert.equal(args[args.indexOf('-i') + 1], 'in.webm');
+  assert.equal(args[args.length - 1], 'out.mp4');
+  assert.ok(args.includes('yuv420p'));
+});
+
+test('터미널 기록(asciicast v2): 머리말과 출력·크기·표시 줄', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ab-cast-'));
+  const file = path.join(dir, 'A.cast');
+  const cast = M.createCast(file, { cols: 120, rows: 40, title: 'demo A', start: Date.now() - 1500 });
+  cast.output('안녕\r\n');
+  cast.resize(100, 30);
+  cast.marker('지시문 전송');
+  const lines = fs.readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.equal(lines[0].version, 2);
+  assert.equal(lines[0].width, 120);
+  assert.deepEqual(lines.slice(1).map((l) => l[1]), ['o', 'r', 'm']);
+  assert.equal(lines[1][2], '안녕\r\n');
+  assert.equal(lines[2][2], '100x30');
+  assert.ok(lines[1][0] >= 1.4 && lines[1][0] < 5);
+  fs.rmSync(dir, { recursive: true, force: true });
 });

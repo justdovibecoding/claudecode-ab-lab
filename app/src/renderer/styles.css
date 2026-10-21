@@ -41,6 +41,14 @@ textarea { padding: 8px 10px; line-height: 1.5; resize: vertical; }
 
 .app { display: flex; height: 100vh; }
 
+/* 녹화 줄 */
+.rec-bar { flex-wrap: wrap; row-gap: 6px; }
+.rec-bar input[type="text"] { width: 140px; }
+button.rec { border-color: #B91C1C; color: #B91C1C; font-weight: 700; }
+button.rec.on { background: #B91C1C; color: #FFFFFF; }
+.rec-state { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; min-width: 120px; }
+.rec-state.on { color: #B91C1C; font-weight: 700; }
+
 /* 왼쪽 */
 .side {
   width: 210px; flex-shrink: 0; background: var(--soft); border-right: 1px solid #E3E6EB;

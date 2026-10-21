@@ -2,13 +2,14 @@
 const { app, BrowserWindow, Menu, ipcMain, shell, clipboard, dialog } = require('electron');
 const fs = require('fs');
 const path = require('path');
-const { execFileSync, spawn } = require('child_process');
+const { execFile, execFileSync, spawn } = require('child_process');
 const pty = require('node-pty');
 
 const { buildChildEnv } = require('./env');
 const { runPs, killTree } = require('./powershell');
 const { resolveClaude } = require('./claude-resolve');
 const lab = require('./lab');
+const media = require('./media');
 
 const APP_DIR = path.resolve(__dirname, '..', '..');
 const LAB_ROOT = lab.resolveLabRoot(process.env, APP_DIR);
@@ -19,8 +20,11 @@ const PERMISSION_MODES = new Set(['', 'manual', 'acceptEdits', 'auto', 'plan', '
 let win = null;
 let claudeExe = null;
 let claudeVersion = '';
+let ffmpegExe = null;
 const terms = { A: null, B: null };
-let live = null; // { exp, session, launches }
+// { exp, session, launches, start, words, redactors, flushTimers, casts, rec }
+// rec: { file, out, startedAt, markers } — 녹화 중일 때만
+let live = null;
 const scripts = new Map(); // runId -> child
 let nextRunId = 1;
 
@@ -70,12 +74,71 @@ function killTerm(side) {
 function stopLive() {
   for (const side of SIDES) killTerm(side);
   if (live) {
+    if (live.rec) finishRecording().catch(() => { /* 화면이 먼저 닫힌 경우 */ });
+    addMarker('end', '세션 종료');
     try { live.session.updateMeta({ endedAt: new Date().toISOString() }); } catch { /* 기록 실패는 무시 */ }
   }
   live = null;
 }
 
-async function startLive({ exp, reset, permissionMode, sizes }) {
+// ---------- 표시(markers.jsonl) ----------
+// t: 세션 시작 기준 초, rec: 녹화 시작 기준 초(녹화 중일 때만). 터미널 기록(.cast)에도 표시를 남긴다.
+function addMarker(kind, label, extra) {
+  if (!live) return null;
+  const now = Date.now();
+  const m = {
+    time: new Date(now).toISOString(), kind, label: String(label || ''),
+    t: Math.round((now - live.start) / 100) / 10,
+    rec: live.rec && live.rec.startedAt ? Math.round((now - live.rec.startedAt) / 100) / 10 : null,
+    ...(extra || {}),
+  };
+  try { live.session.appendMarker(m); } catch { /* 기록 실패는 무시 */ }
+  for (const side of SIDES) if (live.casts[side]) live.casts[side].marker(m.label || kind);
+  if (live.rec && live.rec.startedAt) live.rec.markers.push(m);
+  return m;
+}
+
+// ---------- 계정 정보 가리기 ----------
+
+function authStatus(configDir) {
+  // 실패하면 null(가리지 못한 채 진행하고 화면에 알림). 실행 자체가 막히면(EINVAL 등) execFile 이 바로 throw 한다.
+  return new Promise((resolve) => {
+    try {
+      execFile(claudeExe, ['auth', 'status'], { encoding: 'utf8', windowsHide: true, timeout: 20000, env: buildChildEnv(process.env, configDir) },
+        (_err, stdout) => {
+          const text = String(stdout || '');
+          try { resolve(JSON.parse(text.slice(text.indexOf('{')))); } catch { resolve(null); }
+        });
+    } catch { resolve(null); }
+  });
+}
+
+// ---------- 녹화 ----------
+// 화면(렌더러)이 getDisplayMedia + MediaRecorder 로 앱 화면을 webm 조각으로 보내면 파일에 이어 쓴다.
+// 끝나면 표시로 유튜브 챕터를 만들고, ffmpeg 가 있으면 mp4 로 바꾼다.
+
+async function finishRecording() {
+  const rec = live && live.rec;
+  if (!rec) throw new Error('녹화 중이 아닙니다.');
+  addMarker('rec-stop', '녹화 끝');
+  live.rec = null;
+  await new Promise((resolve) => rec.out.end(resolve));
+  const base = rec.file.replace(/\.webm$/, '');
+  const chapters = media.buildChapters(rec.markers);
+  fs.writeFileSync(`${base}-chapters.txt`, chapters.lines.join('\n') + '\n');
+  fs.writeFileSync(`${base}-markers.json`, JSON.stringify(rec.markers, null, 2));
+  const result = { file: rec.file, chapters, mp4: null, converting: false };
+  if (ffmpegExe && fs.statSync(rec.file).size > 0) {
+    result.converting = true;
+    result.mp4 = `${base}.mp4`;
+    execFile(ffmpegExe, media.mp4Args(rec.file, result.mp4), { windowsHide: true, timeout: 30 * 60 * 1000 }, (err, _o, stderr) => {
+      send('rec:converted', { ok: !err, mp4: result.mp4, error: err ? String(stderr || err.message).trim().split(/\r?\n/).pop() : '' });
+    });
+  }
+  return result;
+}
+
+async function startLive({ exp, reset, permissionMode, sizes, mask }) {
   lab.assertName(exp);
   if (!PERMISSION_MODES.has(permissionMode || '')) throw new Error(`잘못된 권한 모드: ${permissionMode}`);
   if (!claudeExe) throw new Error('claude.exe 를 찾지 못했습니다. Claude Code 설치를 확인하거나 CC_AB_CLAUDE 환경 변수로 경로를 지정하세요.');
@@ -88,16 +151,21 @@ async function startLive({ exp, reset, permissionMode, sizes }) {
   const launches = {};
   for (const side of SIDES) launches[side] = await getLaunch(exp, side, permissionMode);
 
+  // 계정 정보 가리기: 양쪽 로그인 계정의 이메일·조직 이름을 화면·터미널 기록·캡처·녹화에서 '*'로 바꾼다(원본 .log 는 그대로).
+  const words = mask ? media.redactWords(await Promise.all(SIDES.map((s) => authStatus(launches[s].config)))) : [];
+
   const session = lab.createSession(lab.experimentDir(LAB_ROOT, exp), {
     experiment: exp, claudeExe, claudeVersion, reset: !!reset, permissionMode: permissionMode || '', launches,
+    mask: !!mask, maskedWords: words.length,
   });
-  live = { exp, session, launches };
+  live = { exp, session, launches, start: Date.now(), words, redactors: {}, flushTimers: {}, casts: {}, rec: null };
+  addMarker('start', '세션 시작');
 
   for (const side of SIDES) {
     const size = (sizes && sizes[side]) || {};
     spawnSide(side, size.cols, size.rows);
   }
-  return { sessionDir: session.dir, launches };
+  return { sessionDir: session.dir, launches, masked: words.length };
 }
 
 // start.ps1 이 준 설정 폴더·작업 폴더·인자로 claude.exe 를 가상 터미널에서 실행한다.
@@ -111,10 +179,24 @@ function spawnSide(side, cols, rows) {
     env: buildChildEnv(process.env, l.config, { COLORTERM: 'truecolor' }),
   });
   terms[side] = p;
+  // 터미널 기록(.cast)은 세션마다 쪽별로 하나. 다시 시작하면 화면을 지우는 신호(RIS)를 넣고 이어 쓴다.
+  if (live.casts[side]) live.casts[side].output('\x1bc');
+  else live.casts[side] = media.createCast(path.join(live.session.dir, `${side}.cast`), { cols, rows, title: `${live.exp} ${side}`, start: live.start });
+  const cast = live.casts[side];
+  const redactor = media.createRedactor(live.words);
+  live.redactors[side] = redactor;
+  const emit = (text) => {
+    if (!text) return;
+    cast.output(text);
+    send('live:data', { side, data: text });
+  };
   p.onData((data) => {
-    if (terms[side] !== p) return; // 이미 끝내거나 바꾼 프로세스의 남은 출력
-    if (live && live.session) live.session.appendOutput(side, data);
-    send('live:data', { side, data });
+    if (terms[side] !== p || !live) return; // 이미 끝내거나 바꾼 프로세스의 남은 출력
+    live.session.appendOutput(side, data);
+    emit(redactor.push(data));
+    // 낱말 앞부분일 수 있어 잡아 둔 글자는 잠시 출력이 없으면 내보낸다.
+    clearTimeout(live.flushTimers[side]);
+    live.flushTimers[side] = setTimeout(() => { if (live && live.redactors[side] === redactor) emit(redactor.flush()); }, 60);
   });
   p.onExit(({ exitCode }) => {
     // 다시 시작해서 이미 새 프로세스로 바뀌었으면 이전 프로세스의 종료는 알리지 않는다.
@@ -137,7 +219,7 @@ function handle(channel, fn) {
 }
 
 function registerIpc() {
-  handle('lab:info', () => ({ labRoot: LAB_ROOT, claudeExe, claudeVersion }));
+  handle('lab:info', () => ({ labRoot: LAB_ROOT, claudeExe, claudeVersion, ffmpegExe }));
   handle('exp:list', () => lab.listExperiments(LAB_ROOT));
   handle('exp:prompt', (exp, name) => lab.readPrompt(lab.experimentDir(LAB_ROOT, exp), name));
   handle('exp:report', (exp) => {
@@ -153,6 +235,7 @@ function registerIpc() {
     killTerm(side);
     spawnSide(side, opts && opts.cols, opts && opts.rows);
     live.session.logTurn({ event: 'restart', side });
+    addMarker('restart', `${side} 다시 시작`, { side });
   });
   ipcMain.on('live:write', (_e, side, data) => {
     if (SIDES.includes(side) && terms[side] && typeof data === 'string') terms[side].write(data);
@@ -160,11 +243,57 @@ function registerIpc() {
   ipcMain.on('live:resize', (_e, side, cols, rows) => {
     if (SIDES.includes(side) && terms[side] && cols > 0 && rows > 0) {
       try { terms[side].resize(Math.floor(cols), Math.floor(rows)); } catch { /* 끝난 터미널 */ }
+      if (live && live.casts[side]) live.casts[side].resize(Math.floor(cols), Math.floor(rows));
     }
   });
   handle('live:logTurn', (record) => {
     if (!live) throw new Error('진행 중인 세션이 없습니다.');
     live.session.logTurn(record);
+  });
+
+  // 표시: 화면이 보내는 것(전송, 멈춤 추정, 직접 표시)
+  handle('mark:add', (kind, label) => {
+    if (!['send', 'done', 'manual'].includes(kind)) throw new Error(`잘못된 표시 종류: ${kind}`);
+    if (!live) throw new Error('진행 중인 세션이 없습니다.');
+    return addMarker(kind, String(label || '').slice(0, 200));
+  });
+  // 화면 캡처: 세션 기록 폴더의 shots\ 에 PNG 로 저장
+  handle('shot:take', async (kind) => {
+    if (!live) throw new Error('진행 중인 세션이 없습니다.');
+    const tag = String(kind || 'manual').replace(/[^a-z0-9-]/gi, '').slice(0, 20) || 'manual';
+    const img = await win.webContents.capturePage();
+    const dir = path.join(live.session.dir, 'shots');
+    fs.mkdirSync(dir, { recursive: true });
+    const m = addMarker('shot', tag);
+    const clock = media.formatClock(m.rec !== null ? m.rec : m.t).replace(/:/g, '-');
+    const file = path.join(dir, `${String(fs.readdirSync(dir).length + 1).padStart(3, '0')}-${clock}-${tag}.png`);
+    fs.writeFileSync(file, img.toPNG());
+    return file;
+  });
+  handle('rec:start', () => {
+    if (!live) throw new Error('세션을 먼저 시작하세요.');
+    if (live.rec) throw new Error('이미 녹화 중입니다.');
+    const dir = path.join(live.session.dir, 'recordings');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, `rec-${lab.stamp()}.webm`);
+    live.rec = { file, out: fs.createWriteStream(file), startedAt: 0, markers: [] };
+    return { file };
+  });
+  handle('rec:started', () => {
+    if (!live || !live.rec) throw new Error('녹화 준비가 안 됐습니다.');
+    live.rec.startedAt = Date.now();
+    addMarker('rec-start', '녹화 시작', { file: path.basename(live.rec.file) });
+  });
+  ipcMain.on('rec:chunk', (_e, buf) => {
+    if (live && live.rec && buf && buf.byteLength) live.rec.out.write(Buffer.from(buf));
+  });
+  handle('rec:stop', () => finishRecording());
+  handle('rec:abort', async () => {
+    if (!live || !live.rec) return;
+    const { file, out } = live.rec;
+    live.rec = null;
+    await new Promise((resolve) => out.end(resolve));
+    fs.rmSync(file, { force: true });
   });
 
   handle('script:run', (name, params) => {
@@ -221,6 +350,11 @@ function registerIpc() {
     let p = LAB_ROOT;
     if (target === 'exp') p = lab.experimentDir(LAB_ROOT, exp);
     else if (target === 'session') { if (!live) throw new Error('진행 중인 세션이 없습니다.'); p = live.session.dir; }
+    else if (target === 'recordings') {
+      if (!live) throw new Error('진행 중인 세션이 없습니다.');
+      p = path.join(live.session.dir, 'recordings');
+      fs.mkdirSync(p, { recursive: true });
+    }
     else if (target === 'workA' || target === 'workB') {
       if (!live) throw new Error('진행 중인 세션이 없습니다.');
       p = live.launches[target.slice(-1)].work;
@@ -253,6 +387,11 @@ function createWindow() {
   // 앱 메뉴를 없애 Ctrl+W(창 닫기), Ctrl+R(새로고침) 같은 기본 단축키가 터미널 키를 가로채지 않게 한다.
   Menu.setApplicationMenu(null);
   win.webContents.on('will-navigate', (e) => e.preventDefault());
+  // 화면 녹화 요청: 녹화를 준비한 때(rec:start)만, 이 앱 화면(창 테두리 제외)만 허락한다. 다른 창·전체 화면은 주지 않는다.
+  win.webContents.session.setDisplayMediaRequestHandler((request, callback) => {
+    const ok = live && live.rec && !live.rec.startedAt && request.frame && request.frame === win.webContents.mainFrame;
+    callback(ok ? { video: win.webContents.mainFrame } : null);
+  });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('before-input-event', (event, input) => {
     if (process.env.CC_AB_DEV === '1' && input.type === 'keyDown' && input.key === 'F12') {
@@ -301,6 +440,7 @@ app.whenReady().then(() => {
       claudeVersion = execFileSync(claudeExe, ['--version'], { encoding: 'utf8', windowsHide: true, env: buildChildEnv(process.env) }).trim();
     } catch { claudeVersion = '(버전 확인 실패)'; }
   }
+  ffmpegExe = media.resolveFfmpeg();
   registerIpc();
   createWindow();
 });

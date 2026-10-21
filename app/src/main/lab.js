@@ -106,7 +106,8 @@ function stamp(date = new Date()) {
   return `${date.getFullYear()}${p(date.getMonth() + 1)}${p(date.getDate())}-${p(date.getHours())}${p(date.getMinutes())}${p(date.getSeconds())}`;
 }
 
-// 대화형 세션 기록: experiments\<이름>\sessions\<시각>\ 에 A.log, B.log(터미널 출력 원본), turns.jsonl(전송 기록)
+// 대화형 세션 기록: experiments\<이름>\sessions\<시각>\ 에 A.log, B.log(터미널 출력 원본), turns.jsonl(전송 기록),
+// markers.jsonl(표시). A.cast·B.cast(터미널 기록), shots\, recordings\ 는 main.js 가 쓴다.
 function createSession(expDir, meta) {
   const dir = path.join(expDir, 'sessions', stamp());
   fs.mkdirSync(dir, { recursive: true });
@@ -118,6 +119,10 @@ function createSession(expDir, meta) {
     },
     logTurn(record) {
       fs.appendFileSync(path.join(dir, 'turns.jsonl'), JSON.stringify({ time: new Date().toISOString(), ...record }) + '\n');
+    },
+    // 표시(전송·멈춤 추정·캡처·녹화 시작/끝 등). 녹화 챕터와 편집용.
+    appendMarker(marker) {
+      fs.appendFileSync(path.join(dir, 'markers.jsonl'), JSON.stringify(marker) + '\n');
     },
     updateMeta(patch) {
       const file = path.join(dir, 'session.json');

@@ -22,7 +22,34 @@ const state = {
   osc: { A: '', B: '' },
   runs: new Map(), // runId -> { out, onDone }
   headlessRun: null,
+  promptName: '', // 마지막으로 불러온 지시문 파일 이름(표시 이름용)
+  // 보낸 뒤 출력이 나오다 멈추면 "멈춤" 표시. { at: 보낸 시각, label }
+  pending: { A: null, B: null },
+  rec: null, // { recorder, stream, chain, startedAt }
 };
+const QUIET_MS = 4000; // 이만큼 출력이 없으면 멈춤(응답 끝 또는 확인 대기)으로 본다
+
+// 화면 설정(체크 상자) 기억. 저장소를 못 쓰는 환경에서도 기본값으로 동작한다.
+const PREFS = ['opt-autorec', 'opt-autoshot', 'opt-mask'];
+function loadPrefs() {
+  for (const id of PREFS) {
+    try {
+      const v = localStorage.getItem(`ab-lab:${id}`);
+      if (v !== null) document.getElementById(id).checked = v === '1';
+    } catch { /* 저장소 없음 */ }
+  }
+}
+function savePref(id) {
+  try { localStorage.setItem(`ab-lab:${id}`, document.getElementById(id).checked ? '1' : '0'); } catch { /* 저장소 없음 */ }
+}
+
+function formatClock(sec) {
+  const s = Math.max(0, Math.floor(sec));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = String(s % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
+}
 const terms = {};
 
 // ---------- 공통 ----------
@@ -201,6 +228,7 @@ async function loadPromptFile(name) {
   const p = await api.readPrompt(state.exp.name, name);
   const strip = (t) => (t === null ? null : P.stripComments(t));
   state.prompt = P.load(P.stripComments(p.common), { A: strip(p.A), B: strip(p.B) });
+  state.promptName = name;
   renderPrompt(false);
 }
 
@@ -218,7 +246,12 @@ function makeTerm(side) {
   term.loadAddon(fit);
   const el = pane(side, '.term');
   term.open(el);
-  term.onData((data) => { if (state.running) api.write(side, data); });
+  term.onData((data) => {
+    if (!state.running) return;
+    api.write(side, data);
+    // 터미널에 직접 입력하고 Enter(확인 창 답 등)를 누른 경우도 멈춤 표시 대상으로 삼는다.
+    if (data.includes('\r') && !state.pending[side]) state.pending[side] = { at: Date.now(), label: '입력' };
+  });
   term.onTitleChange((title) => { pane(side, '.title').textContent = title; });
   // Claude Code 상태 신호(OSC 7501). 시작할 때 오는 "?"는 지원 여부 질문이며, 응답 형식이 공개돼 있지 않아
   // 지금은 응답하지 않는다(그러면 상태 신호도 오지 않음). 질문이 아닌 값이 오면 받은 그대로 보여 준다.
@@ -287,10 +320,84 @@ function renderStatus() {
     if (state.osc[side]) text += ` · 상태 신호 ${state.osc[side]}`;
     el.textContent = text;
     el.className = `status ${cls}`;
+    checkQuiet(side);
   }
   $('#btn-start').disabled = state.running;
   $('#btn-stop').disabled = !state.running;
+  const rec = $('#rec-state');
+  const on = !!(state.rec && state.rec.startedAt);
+  rec.textContent = on ? `녹화 중 ${formatClock((Date.now() - state.rec.startedAt) / 1000)}` : (state.rec ? '녹화 준비 중…' : '녹화 안 함');
+  rec.classList.toggle('on', on);
+  $('#btn-rec').textContent = state.rec ? '녹화 끝' : '녹화 시작';
+  $('#btn-rec').classList.toggle('on', !!state.rec);
 }
+
+// 보낸 뒤 출력이 나오다가 QUIET_MS 동안 멈추면 "멈춤" 표시(응답 끝 또는 확인 대기로 추정)와 자동 캡처.
+function checkQuiet(side) {
+  const p = state.pending[side];
+  if (!p || !state.running) return;
+  const last = state.lastData[side];
+  if (last <= p.at + 300 || Date.now() - last < QUIET_MS) return;
+  state.pending[side] = null;
+  const label = `${side} 멈춤 · ${formatClock((last - p.at) / 1000)} 경과`;
+  guard(() => api.mark('done', label));
+  if ($('#opt-autoshot').checked) guard(() => api.shot(`${side}-done`));
+}
+
+// ---------- 녹화 ----------
+// 메인 프로세스가 허락한 이 앱 화면만 getDisplayMedia 로 받아 webm 조각을 1초마다 보낸다.
+
+async function startRecording() {
+  if (!state.running) return toast('세션을 먼저 시작하세요.', true);
+  if (state.rec) return;
+  const r = await guard(() => api.recStart());
+  if (!r) return;
+  state.rec = { recorder: null, stream: null, chain: Promise.resolve(), startedAt: 0 };
+  renderStatus();
+  try {
+    const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: false });
+    const mimeType = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'].find((m) => MediaRecorder.isTypeSupported(m));
+    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 12000000 });
+    const rec = state.rec;
+    recorder.ondataavailable = (e) => {
+      if (!e.data || !e.data.size) return;
+      rec.chain = rec.chain.then(async () => api.recChunk(await e.data.arrayBuffer()));
+    };
+    rec.recorder = recorder;
+    rec.stream = stream;
+    recorder.start(1000);
+    await api.recStarted();
+    rec.startedAt = Date.now();
+    toast(`녹화 시작: ${r.file}`);
+  } catch (err) {
+    if (state.rec && state.rec.stream) state.rec.stream.getTracks().forEach((t) => t.stop());
+    state.rec = null;
+    await guard(() => api.recAbort());
+    toast(`녹화를 시작하지 못했습니다: ${err.message || err}`, true);
+  }
+  renderStatus();
+}
+
+async function stopRecording() {
+  const rec = state.rec;
+  if (!rec || !rec.recorder) return;
+  const stopped = new Promise((resolve) => { rec.recorder.onstop = resolve; });
+  rec.recorder.stop();
+  await stopped;
+  await rec.chain;
+  rec.stream.getTracks().forEach((t) => t.stop());
+  state.rec = null;
+  renderStatus();
+  const res = await guard(() => api.recStop());
+  if (!res) return;
+  const ch = res.chapters;
+  const chText = ch.valid ? `챕터 ${ch.lines.length}개` : `챕터 ${ch.lines.length}개(유튜브는 3개 이상 필요)`;
+  toast(res.converting ? `녹화 저장(${chText}). mp4 로 바꾸는 중…` : `녹화 저장: ${res.file} (${chText}${res.mp4 ? '' : ', ffmpeg 가 없어 webm 그대로'})`);
+}
+
+api.onRecConverted(({ ok, mp4, error }) => {
+  toast(ok ? `mp4 저장: ${mp4}` : `mp4 변환 실패: ${error}`, !ok);
+});
 setInterval(renderStatus, 500);
 
 async function startSession() {
@@ -314,6 +421,7 @@ async function startSession() {
     reset: $('#opt-reset').checked,
     permissionMode: $('#opt-perm').value,
     sizes,
+    mask: $('#opt-mask').checked,
   }));
   if (!r) { renderStatus(); return; }
   state.running = true;
@@ -324,13 +432,17 @@ async function startSession() {
     pane(side, '.cfg').title = `${l.config}\n작업 폴더: ${l.work}\nclaude ${l.args.join(' ')}`;
     sendSize(side); // 준비하는 동안 창 크기가 바뀌었으면 맞춘다
   }
+  state.pending = { A: null, B: null };
   const warnings = SIDES.flatMap((s) => r.launches[s].warnings || []);
-  toast(warnings.length ? `주의: 작업 폴더 상위에 ${warnings.join(', ')}` : `세션 기록: ${r.sessionDir}`, warnings.length > 0);
+  const maskNote = $('#opt-mask').checked && !r.masked ? ' · 계정 정보를 읽지 못해 가리지 않음' : '';
+  toast(warnings.length ? `주의: 작업 폴더 상위에 ${warnings.join(', ')}` : `세션 기록: ${r.sessionDir}${maskNote}`, warnings.length > 0 || !!maskNote);
   terms.A.term.focus();
   renderStatus();
+  if ($('#opt-autorec').checked) await startRecording();
 }
 
 async function stopSession() {
+  if (state.rec) await stopRecording();
   await guard(() => api.stopLive());
   state.running = false;
   renderStatus();
@@ -364,6 +476,13 @@ async function sendTo(sides) {
     extraB: f.B.extra,
   }));
   toast(`${targets.join('·')} 에 보냄${f.level === 'same' ? '' : ' (지시문 변형 기록됨)'}`);
+  // 표시와 자동 캡처(영상 편집·챕터용)
+  const now = Date.now();
+  for (const side of targets) state.pending[side] = { at: now, label: '전송' };
+  const firstLine = state.prompt.common.split(/\r?\n/).map((s) => s.trim()).find(Boolean) || '';
+  const short = state.promptName || (firstLine.length > 24 ? `${firstLine.slice(0, 24)}…` : firstLine);
+  await guard(() => api.mark('send', `지시문 전송(${targets.join('·')})${short ? `: ${short}` : ''}`));
+  if ($('#opt-autoshot').checked) setTimeout(() => { if (state.running) guard(() => api.shot('send')); }, 1500);
 }
 
 // ---------- 다른 화면 ----------
@@ -410,6 +529,24 @@ function bind() {
   $('#btn-start').addEventListener('click', startSession);
   $('#btn-stop').addEventListener('click', stopSession);
   $('#btn-open-session').addEventListener('click', () => guard(() => api.open('session')));
+  $('#btn-rec').addEventListener('click', () => (state.rec ? stopRecording() : startRecording()));
+  $('#btn-shot').addEventListener('click', async () => {
+    if (!state.running) return toast('세션을 먼저 시작하세요.', true);
+    const file = await guard(() => api.shot('manual'));
+    if (file) toast(`캡처: ${file}`);
+  });
+  $('#btn-mark').addEventListener('click', async () => {
+    if (!state.running) return toast('세션을 먼저 시작하세요.', true);
+    const label = $('#mark-label').value.trim() || '표시';
+    const m = await guard(() => api.mark('manual', label));
+    if (m) {
+      $('#mark-label').value = '';
+      toast(`표시: ${label} (${formatClock(m.rec !== null ? m.rec : m.t)}${m.rec !== null ? ' 녹화 기준' : ' 세션 기준'})`);
+    }
+  });
+  $('#mark-label').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); $('#btn-mark').click(); } });
+  $('#btn-open-rec').addEventListener('click', () => guard(() => api.open('recordings')));
+  for (const id of PREFS) document.getElementById(id).addEventListener('change', () => savePref(id));
   $('#opt-size').addEventListener('change', (ev) => {
     const [w, h] = ev.target.value.split('x').map(Number);
     if (w && h) guard(() => api.setWindowSize(w, h));
@@ -504,6 +641,7 @@ function bind() {
 
 async function init() {
   for (const side of SIDES) makeTerm(side);
+  loadPrefs();
   bind();
   BConfig.bind();
   Judging.bind();
@@ -511,7 +649,7 @@ async function init() {
   renderStatus();
   const info = await guard(() => api.info());
   if (info) {
-    $('#lab-info').textContent = `저장소: ${info.labRoot}\nclaude: ${info.claudeExe || '찾지 못함'}\n${info.claudeVersion || ''}`;
+    $('#lab-info').textContent = `저장소: ${info.labRoot}\nclaude: ${info.claudeExe || '찾지 못함'}\n${info.claudeVersion || ''}\nffmpeg: ${info.ffmpegExe || '없음(녹화는 webm 으로만 저장)'}`;
     if (!info.claudeExe) toast('claude.exe 를 찾지 못했습니다. CC_AB_CLAUDE 환경 변수로 경로를 지정하세요.', true);
   }
   await guard(() => loadExperiments(null));
