@@ -8,5 +8,11 @@ lab.local.json
 # 실행 결과(용량이 크고 PC마다 다름). 남기려면 이 줄을 지우고 필요한 것만 올린다.
 experiments/*/results/
 
+# Electron 앱의 대화형 세션 기록(터미널 출력 원본·전송 기록)
+experiments/*/sessions/
+
+# Electron 앱 의존성
+app/node_modules/
+
 # 작업 폴더는 기본적으로 저장소 밖(workRoot)에 만들지만, 혹시 안에 생긴 경우 대비
 experiments/*/work-*/

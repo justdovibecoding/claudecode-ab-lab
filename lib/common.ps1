@@ -48,17 +48,21 @@ function Get-SkillDirs($Exp) {
     @(Get-ChildItem (Join-Path $Exp.Dir 'skills') -Directory -ErrorAction SilentlyContinue)
 }
 
-function Invoke-Mirror([string]$From, [string]$To) {
+function Invoke-Mirror([string]$From, [string]$To, [string[]]$KeepDirs = @()) {
     # /MIR: 원본과 똑같이 맞춘다(대상에만 있는 파일은 지워짐). robocopy는 8 이상이 실패.
     # .gitkeep 은 빈 폴더를 git에 남기기 위한 표시라서 복사하지 않는다.
-    robocopy $From $To /MIR /XF .gitkeep /NFL /NDL /NJH /NJS /NP | Out-Null
+    # $KeepDirs 에 적은 폴더 이름은 복사도, 삭제도 하지 않는다(/XD).
+    $xd = if ($KeepDirs.Count) { @('/XD') + $KeepDirs } else { @() }
+    robocopy $From $To /MIR /XF .gitkeep @xd /NFL /NDL /NJH /NJS /NP | Out-Null
     if ($LASTEXITCODE -ge 8) { throw "복사 실패: $From -> $To (robocopy $LASTEXITCODE)" }
 }
 
 # 실험 폴더의 skills\ 를 B 설정 폴더의 skills\ 로 똑같이 맞춘다(원본은 실험 폴더 쪽).
+# claude.ai 계정 스킬은 같은 폴더의 synced\ 에 저장되므로(.trash\ 포함) 건드리지 않는다.
+# 지우면 B에서만 계정 스킬이 빠져 A와 조건이 달라진다.
 function Sync-Skills($Exp) {
     $src = Join-Path $Exp.Dir 'skills'
-    if (Test-Path $src) { Invoke-Mirror $src (Join-Path $Exp.ConfigB 'skills') }
+    if (Test-Path $src) { Invoke-Mirror $src (Join-Path $Exp.ConfigB 'skills') @('synced', '.trash') }
 }
 
 # fixture\ 를 작업 폴더에 똑같이 덮어써서 출발점을 맞춘다.

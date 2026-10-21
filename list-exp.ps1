@@ -14,7 +14,7 @@ $dirs | ForEach-Object {
         Plugins     = (Get-PluginDirs $e | ForEach-Object Name) -join ', '
         Skills      = (Get-SkillDirs $e | ForEach-Object Name) -join ', '
         Installed   = Test-Path (Join-Path $e.ConfigB 'plugins\installed_plugins.json')
-        Prompts     = @(Get-ChildItem (Join-Path $e.Dir 'prompts') -Filter *.md -ErrorAction SilentlyContinue).Count
+        Prompts     = @(Get-ChildItem (Join-Path $e.Dir 'prompts') -Filter *.md -ErrorAction SilentlyContinue | Where-Object Name -notmatch '\.(A|B)\.md$').Count
         Results     = @(Get-ChildItem (Join-Path $e.Dir 'results') -Directory -ErrorAction SilentlyContinue).Count
         BLogin      = Test-Path (Join-Path $e.ConfigB '.credentials.json')
         Description = $e.Meta.description

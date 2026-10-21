@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:">
+<title>Claude Code A/B 랩</title>
+<link rel="stylesheet" href="../../node_modules/@xterm/xterm/css/xterm.css">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app">
+  <nav class="side" aria-label="실험과 화면">
+    <div class="brand">A/B 랩</div>
+
+    <div class="label">실험</div>
+    <ul id="exp-list" class="exp-list"></ul>
+    <div class="side-actions">
+      <button type="button" id="btn-refresh" class="ghost small">새로고침</button>
+      <button type="button" id="btn-new-toggle" class="ghost small">새 실험</button>
+    </div>
+    <form id="new-exp" class="new-exp" hidden>
+      <label for="new-name">이름(영문·숫자·._-)</label>
+      <input id="new-name" type="text" required pattern="[A-Za-z0-9._\-]+">
+      <label for="new-desc">설명</label>
+      <input id="new-desc" type="text">
+      <button type="submit" class="primary small">만들기</button>
+    </form>
+
+    <div class="label">화면</div>
+    <div class="tabs" role="tablist">
+      <button type="button" role="tab" data-view="live" aria-selected="true">대화형 비교</button>
+      <button type="button" role="tab" data-view="check" aria-selected="false">점검 · 로그인</button>
+      <button type="button" role="tab" data-view="headless" aria-selected="false">반복 측정</button>
+      <button type="button" role="tab" data-view="results" aria-selected="false">결과</button>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <div id="lab-info" class="lab-info"></div>
+  </nav>
+
+  <main class="main">
+    <header class="exp-head">
+      <h1 id="exp-title">실험을 고르세요</h1>
+      <span id="exp-meta" class="exp-meta"></span>
+    </header>
+
+    <!-- 대화형 비교 -->
+    <section id="view-live" class="view" data-view="live">
+      <div class="toolbar">
+        <button type="button" id="btn-start" class="primary">세션 시작</button>
+        <label class="check"><input type="checkbox" id="opt-reset" checked> 작업 폴더 초기화</label>
+        <label>권한 모드
+          <select id="opt-perm">
+            <option value="">기본</option>
+            <option value="acceptEdits">acceptEdits</option>
+            <option value="auto">auto</option>
+            <option value="plan">plan</option>
+            <option value="bypassPermissions">bypassPermissions</option>
+          </select>
+        </label>
+        <button type="button" id="btn-stop">세션 종료</button>
+        <span class="spacer"></span>
+        <label>창 크기
+          <select id="opt-size">
+            <option value="">그대로</option>
+            <option value="1920x1080">1920×1080</option>
+            <option value="1600x900">1600×900</option>
+            <option value="1280x720">1280×720</option>
+          </select>
+        </label>
+        <button type="button" id="btn-open-session">기록 폴더</button>
+      </div>
+
+      <div id="banner" class="banner same" role="status"></div>
+
+      <div class="panes">
+        <section class="pane" data-side="A" aria-label="A 기본">
+          <div class="pane-head">
+            <strong>A 기본</strong>
+            <span class="cfg"></span>
+            <span class="title"></span>
+            <span class="status">대기</span>
+            <button type="button" class="tiny restart">다시 시작</button>
+            <button type="button" class="tiny open-work">작업 폴더</button>
+          </div>
+          <div class="term"></div>
+          <div class="draft">
+            <div class="draft-head">
+              <label for="draft-A">A 예비 입력</label>
+              <span class="chip"></span>
+              <span class="spacer"></span>
+              <button type="button" class="small reset-draft">공통으로 되돌리기</button>
+              <button type="button" class="small outline send-one">A만 보내기</button>
+            </div>
+            <textarea id="draft-A" rows="2"></textarea>
+          </div>
+        </section>
+
+        <section class="pane" data-side="B" aria-label="B 비교">
+          <div class="pane-head">
+            <strong>B 비교</strong>
+            <span class="cfg"></span>
+            <span class="title"></span>
+            <span class="status">대기</span>
+            <button type="button" class="tiny restart">다시 시작</button>
+            <button type="button" class="tiny open-work">작업 폴더</button>
+          </div>
+          <div class="term"></div>
+          <div class="draft">
+            <div class="draft-head">
+              <label for="draft-B">B 예비 입력</label>
+              <span class="chip"></span>
+              <span class="spacer"></span>
+              <button type="button" class="small reset-draft">공통으로 되돌리기</button>
+              <button type="button" class="small outline send-one">B만 보내기</button>
+            </div>
+            <textarea id="draft-B" rows="2"></textarea>
+          </div>
+        </section>
+      </div>
+
+      <div class="common">
+        <label for="common">공통 입력</label>
+        <select id="prompt-file" aria-label="지시문 불러오기"></select>
+        <textarea id="common" rows="2" placeholder="여기에 쓰면 수정하지 않은 예비 입력창에 따라 들어갑니다 · Ctrl+Enter 로 둘 다 보내기"></textarea>
+        <button type="button" id="btn-send-both" class="primary">A·B 둘 다 보내기</button>
+      </div>
+    </section>
+
+    <!-- 점검 · 로그인 -->
+    <section id="view-check" class="view" data-view="check" hidden>
+      <div class="toolbar">
+        <button type="button" id="btn-doctor" class="primary">점검 실행</button>
+        <button type="button" id="btn-login-a">A 로그인</button>
+        <button type="button" id="btn-login-b">B 로그인(이 실험)</button>
+        <button type="button" id="btn-open-exp">실험 폴더 열기</button>
+      </div>
+      <p class="hint">로그인은 새 PowerShell 창에서 진행됩니다. 끝나면 점검을 다시 실행해 확인하세요.</p>
+      <pre id="check-out" class="out"></pre>
+    </section>
+
+    <!-- 반복 측정 -->
+    <section id="view-headless" class="view" data-view="headless" hidden>
+      <div class="toolbar wrap">
+        <label>지시문 <select id="hl-prompt"></select></label>
+        <label>회차 <input id="hl-runs" type="number" min="1" max="50" value="3"></label>
+        <label>권한 모드
+          <select id="hl-perm">
+            <option value="acceptEdits">acceptEdits</option>
+            <option value="auto">auto</option>
+            <option value="plan">plan</option>
+            <option value="dontAsk">dontAsk</option>
+            <option value="bypassPermissions">bypassPermissions</option>
+          </select>
+        </label>
+        <label>회당 예산(USD) <input id="hl-budget" type="number" min="0" step="0.5" value="0"></label>
+        <label>쪽
+          <select id="hl-side"><option value="Both">A·B</option><option value="A">A만</option><option value="B">B만</option></select>
+        </label>
+        <button type="button" id="btn-hl-run" class="primary">측정 시작</button>
+        <button type="button" id="btn-hl-cancel">취소</button>
+      </div>
+      <p class="hint">지시문 옆에 <code>이름.A.md</code> / <code>이름.B.md</code> 가 있으면 그쪽에는 변형을 보내고 결과에 표시합니다.</p>
+      <pre id="headless-out" class="out"></pre>
+    </section>
+
+    <!-- 결과 -->
+    <section id="view-results" class="view" data-view="results" hidden>
+      <div class="toolbar">
+        <button type="button" id="btn-report" class="primary">보고서 만들기</button>
+        <button type="button" id="btn-open-exp2">실험 폴더 열기</button>
+      </div>
+      <pre id="report-out" class="out"></pre>
+    </section>
+  </main>
+</div>
+
+<script src="../../node_modules/@xterm/xterm/lib/xterm.js"></script>
+<script src="../../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+<script src="../shared/prompt.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

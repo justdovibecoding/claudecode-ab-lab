@@ -177,9 +177,26 @@ experiments\superpowers\prompts\02-bugfix.md
 - 완료 조건을 분명히 적습니다(예: "`npm test`가 모두 통과하면 끝"). 결과 판정이 쉬워집니다.
 - 사람에게 되묻지 않고 끝까지 진행하도록 적어 두면 헤드리스 실행에서 중간에 멈추지 않습니다.
 
+### 쪽별 변형 지시문 (`<이름>.A.md`, `<이름>.B.md`)
+
+스킬은 이름을 지시문에 적어야 쓰이는 경우가 있습니다. 그럴 때는 공통 지시문 옆에 변형 파일을 둡니다.
+
+```
+prompts\01-task.md      README를 읽고 요약해줘
+prompts\01-task.B.md    README를 읽고 요약해줘 (superpowers 스킬을 사용해줘)
+```
+
+- `run-headless.ps1 -Prompt 01-task`는 B에 `01-task.B.md` 내용을 보냅니다. A 변형 파일이 없으면 A는 공통 지시문.
+- 결과 폴더에 `prompt.B.md`가 함께 저장되고, `conditions.json`의 `promptOverride`에 `["B"]`, 보고서에 "지시문 변형" 경고가 붙습니다.
+- GUI 앱의 "지시문 불러오기"도 같은 규칙으로 B 예비 입력창을 채웁니다.
+- 변형은 비교 조건을 바꾸므로 공통 문장은 그대로 두고 **덧붙이기만** 하는 것을 권합니다(GUI 배너의 "호출 문구").
+
 ---
 
 ## 5. 나란히 실행 (녹화용)
+
+> GUI 앱(`.\app.ps1`)을 쓰면 한 창 안에서 A/B를 띄우고 예비 입력창·공정성 배너·전송 기록까지 함께 쓸 수 있습니다.
+> 자세한 내용은 [app.md](app.md). 아래는 Windows Terminal로 띄우는 방법입니다.
 
 ```powershell
 .\open-both.ps1 -Exp superpowers
@@ -243,8 +260,8 @@ A/B에 **같은 모드**를 쓰는 한에서 과제에 맞는 모드를 고르�
 
 | 파일 | 내용 |
 |---|---|
-| `conditions.json` | 실험, 지시문, 회차, 모델, 권한 모드, 예산 한도, B 구성(플러그인·스킬·설치 여부·MCP), Claude Code 버전, 시작 시각 |
-| `prompt.md` | 사용한 지시문 사본 |
+| `conditions.json` | 실험, 지시문, 변형을 받은 쪽(`promptOverride`), 회차, 모델, 권한 모드, 예산 한도, B 구성(플러그인·스킬·설치 여부·MCP), Claude Code 버전, 시작 시각 |
+| `prompt.md`, `prompt.A.md`, `prompt.B.md` | 사용한 지시문 사본(변형이 있을 때만 쪽별 파일) |
 | `A-1.json` … | `claude -p` JSON 원본 |
 | `A-1-result.md` … | 최종 응답 텍스트 |
 | `A-1-changes.txt` … | 실습 원본 대비 바뀐 파일(`A` 추가 / `M` 수정 / `D` 삭제, `.git` 제외) |
@@ -288,9 +305,9 @@ B 설정 폴더 안의 로그인 정보도 함께 사라집니다.
 
 | 올라감 | 제외(.gitignore) |
 |---|---|
-| 스크립트, 문서, `templates\`, `empty-mcp.json` | `config-vanilla\`, `experiments\*\config-B\` (로그인 토큰) |
-| `experiments\<이름>\experiment.json`, `NOTES.md`, `REPORT.md` | `experiments\*\results\` (용량 큼) |
-| `fixture\`, `plugins\`, `skills\`, `prompts\`, `mcp-B.json` | `lab.local.json` (PC 전용) |
+| 스크립트, 문서, `templates\`, `empty-mcp.json`, `app\`(소스) | `config-vanilla\`, `experiments\*\config-B\` (로그인 토큰) |
+| `experiments\<이름>\experiment.json`, `NOTES.md`, `REPORT.md` | `experiments\*\results\`, `experiments\*\sessions\` (용량 큼) |
+| `fixture\`, `plugins\`, `skills\`, `prompts\`, `mcp-B.json` | `lab.local.json` (PC 전용), `app\node_modules\` |
 
 `plugins\`에 외부 플러그인을 통째로 넣으면 그 라이선스를 따라야 합니다. 공개 저장소라면
 플러그인 출처·커밋만 `NOTES.md`에 적고 폴더는 `.gitignore`에 추가하는 방법도 있습니다.

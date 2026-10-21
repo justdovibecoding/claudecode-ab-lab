@@ -20,6 +20,22 @@ if (-not $promptFile) { throw "지시문을 찾을 수 없습니다: $Prompt" }
 $text = Get-Content $promptFile -Raw -Encoding UTF8
 if (-not ($text -replace '(?s)<!--.*?-->', '').Trim()) { throw "지시문이 비어 있습니다(주석만 있음): $promptFile" }
 $promptName = [IO.Path]::GetFileNameWithoutExtension($promptFile)
+
+# 쪽별 변형: 01-task.md 옆에 01-task.A.md / 01-task.B.md 가 있으면 그쪽에는 변형을 보낸다
+# (예: B에만 "superpowers 스킬을 사용해줘" 를 덧붙임). 변형은 conditions.json 과 보고서에 표시된다.
+$promptBase = $promptFile -replace '\.md$', ''
+$texts = @{}
+$override = @()
+foreach ($s in 'A', 'B') {
+    $variantFile = "$promptBase.$s.md"
+    if (Test-Path $variantFile -PathType Leaf) {
+        $texts[$s] = Get-Content $variantFile -Raw -Encoding UTF8
+        if (-not ($texts[$s] -replace '(?s)<!--.*?-->', '').Trim()) { throw "변형 지시문이 비어 있습니다: $variantFile" }
+        $override += $s
+    } else {
+        $texts[$s] = $text
+    }
+}
 $sides = if ($Side -eq 'Both') { @('A', 'B') } else { @($Side) }
 $fixture = Join-Path $e.Dir 'fixture'
 
@@ -27,11 +43,13 @@ $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $outDir = Join-Path $e.Dir "results\$stamp-$promptName"
 New-Item -ItemType Directory -Force $outDir | Out-Null
 Copy-Item $promptFile (Join-Path $outDir 'prompt.md')
+foreach ($s in $override) { Copy-Item "$promptBase.$s.md" (Join-Path $outDir "prompt.$s.md") }
 
 # 나중에 같은 조건으로 다시 돌릴 수 있게 실행 조건을 남긴다.
 $cond = [ordered]@{
     experiment     = $Exp
     prompt         = $promptName
+    promptOverride = @($override)
     runs           = $Runs
     sides          = $sides
     model          = if ($Model) { $Model } else { $e.Meta.model }
@@ -68,7 +86,7 @@ try {
             Push-Location $l.Work
             Write-Host "[$Exp/$side] $i/$Runs 실행 중..."
             $global:LASTEXITCODE = 0  # 앞의 robocopy 종료 코드가 남지 않게
-            $raw = $text | & claude @cliArgs
+            $raw = $texts[$side] | & claude @cliArgs
             $exit = $LASTEXITCODE
             Pop-Location
 

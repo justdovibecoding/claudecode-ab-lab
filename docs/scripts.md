@@ -68,9 +68,10 @@
 | `-Side A\|B` | O | 실행할 쪽 |
 | `-Model <모델>` | | 실험 기본 모델 대신 |
 | `-PermissionMode <모드>` | | `manual`, `acceptEdits`, `auto`, `plan`, `dontAsk`, `bypassPermissions` |
+| `-PrintLaunchJson` | | 실행하지 않고 `{"experiment","side","model","config","work","args","warnings"}` JSON 한 줄을 출력(GUI 앱이 사용) |
 
 - 작업 폴더가 없으면 실습 원본에서 만듭니다(있으면 그대로 이어서 작업).
-- B는 실행 전에 `skills\` → `config-B\skills\`를 맞춥니다.
+- B는 실행 전에 `skills\` → `config-B\skills\`를 맞춥니다. 계정 스킬이 저장되는 `config-B\skills\synced\`, `.trash\`는 건드리지 않습니다.
 - 실행 인자: `--model <모델> --strict-mcp-config --mcp-config <A:empty-mcp.json | B:mcp-B.json> [--permission-mode] [B: --plugin-dir ...]`
 - 끝나면 창의 `CLAUDE_CONFIG_DIR`, 위치, 창 제목을 원래대로 되돌립니다.
 
@@ -106,6 +107,7 @@
 | `-Side A\|B\|Both` | `Both` | 한쪽만 측정할 때 |
 
 - PowerShell 5.1의 파이프 인코딩을 UTF-8로 바꿔 한국어 지시문을 전달하고, 끝나면 되돌립니다.
+- 지시문 옆에 `<이름>.A.md` / `<이름>.B.md`가 있으면 그쪽에는 변형을 보내고 `conditions.json`의 `promptOverride`에 기록합니다.
 - 결과 파일 목록은 [usage.md 6절](usage.md#6-반복-측정-근거용)을 보세요.
 
 ## report.ps1
@@ -115,6 +117,15 @@
 | `-Exp <이름>` | 필수 |
 
 `results\*\summary.csv`와 `conditions.json`을 모아 `REPORT.md`를 씁니다(덮어씀).
+
+## app.ps1
+
+| 옵션 | 설명 |
+|---|---|
+| (없음) | GUI 앱 실행. `app\node_modules`가 없으면 `npm install` 먼저 |
+| `-Dev` | 이 창에서 실행하며 F12 개발자 도구, 화면 로그 출력 |
+
+자세한 내용은 [app.md](app.md).
 
 ## lib\common.ps1 주요 함수
 
@@ -126,7 +137,7 @@
 | `Get-SideLaunch` | 쪽별 설정 폴더·작업 폴더·`claude` 인자 |
 | `Sync-Skills` | `skills\` → `config-B\skills\` |
 | `Reset-Work` | 실습 원본 → 작업 폴더 |
-| `Invoke-Mirror` | `robocopy /MIR` 래퍼(종료 코드 8 이상이면 오류) |
+| `Invoke-Mirror` | `robocopy /MIR` 래퍼(종료 코드 8 이상이면 오류). 세 번째 인자로 보존할 폴더 이름(`/XD`) |
 | `Get-AuthStatus` | 설정 폴더별 `claude auth status` |
 | `Find-AncestorContext` | 상위 폴더의 `CLAUDE.md` 등 찾기 |
 | `Compare-Tree` | 두 폴더의 파일 해시 비교(추가/수정/삭제) |

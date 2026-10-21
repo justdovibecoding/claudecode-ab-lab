@@ -75,6 +75,18 @@ Remove-Item env:CLAUDE_CONFIG_DIR
 robocopy 종료 코드 8 이상은 실패입니다. 작업 폴더의 파일이 다른 프로그램(편집기, 실행 중인 Claude Code, 개발 서버)에
 잡혀 있는 경우가 대부분입니다. 해당 프로그램을 닫고 다시 실행하세요.
 
+## GUI 앱
+
+| 증상 | 원인과 해결 |
+|---|---|
+| `.\app.ps1`에서 `npm install` 실패 | Node.js 20 이상 설치 확인. 회사 프록시 환경이면 npm 프록시 설정 |
+| 왼쪽 아래 "claude: 찾지 못함" | npm/네이티브 기본 위치에 `claude.exe`가 없음. `CC_AB_CLAUDE` 환경 변수에 경로 지정 후 실행 |
+| 세션 시작 직후 터미널이 `[프로세스 종료: 1]` | 폴더 신뢰 확인에서 기본값 "No, exit"가 선택됨. 아래 화살표로 "Yes"를 고른 뒤 Enter |
+| "start.ps1 실패" | 실험 이름·로그인 확인. 점검 화면에서 `doctor` 실행 |
+| 한글 글자 사이가 벌어져 보임 | 터미널 글꼴에 한글이 없음. D2Coding 등 한글 고정폭 글꼴을 설치하고 `app\src\renderer\app.js`의 `fontFamily`에 추가 |
+| 상태가 "출력 중/조용함"으로만 나옴 | 정상. 상태 신호(OSC 7501)는 아직 지원하지 않음([app.md](app.md) 9절) |
+| 화면이 이상하면 | `.\app.ps1 -Dev`로 실행해 F12 개발자 도구의 Console 확인 |
+
 ## 작업 폴더 상위 경고
 
 ```

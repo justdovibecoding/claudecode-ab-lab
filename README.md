@@ -10,6 +10,8 @@ Claude Code의 **스킬·플러그인을 넣은 환경(B)**과 **기본 환경(A
 
 - **환경 분리**: `CLAUDE_CONFIG_DIR`로 설정 폴더를 A/B로 나눠, 평소 쓰는 `~/.claude`의 플러그인·스킬·훅·메모리·MCP가 섞이지 않게 합니다.
 - **실험 단위 관리**: 비교 주제마다 `experiments\<이름>\`에 실습 프로젝트, 비교 대상, 지시문, 결과를 모아 둡니다.
+- **GUI 앱**: A/B Claude Code 화면을 한 창에 나란히 띄우고, 공통 입력을 쪽별 예비 입력창에 동기화한 뒤
+  쪽마다 고쳐서 보냅니다. 지시문 차이는 공정성 배너와 기록으로 공개합니다([docs/app.md](docs/app.md)).
 - **나란히 실행**: Windows Terminal을 좌우로 나눠 왼쪽 A, 오른쪽 B를 동시에 띄웁니다(녹화용).
 - **반복 측정**: 같은 지시문을 A/B에서 번갈아 N회 실행하고 비용·턴·시간·토큰·변경 파일 수를 모읍니다.
 - **보고서**: 측정 결과를 `REPORT.md` 비교표로 정리합니다.
@@ -24,6 +26,7 @@ Claude Code의 **스킬·플러그인을 넣은 환경(B)**과 **기본 환경(A
 | Claude Code | 2.1.273 이상(`syncClaudeAiPlugins` 설정). 2.1.306에서 시험 |
 | 계정 | Claude 구독(Pro/Max 등) 또는 Anthropic Console |
 | 선택 | Windows Terminal(`wt`). 없으면 창 2개로 대체 |
+| GUI 앱 | Node.js 20 이상(22.19에서 시험). 처음 실행 때 `app\`에 Electron 등을 설치 |
 
 ## 빠른 시작
 
@@ -53,7 +56,10 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 .\login.ps1 -Exp superpowers
 .\doctor.ps1 -Exp superpowers
 
-# 7-a) 나란히 실행 (녹화용)
+# 7-a) GUI 앱으로 비교 (예비 입력창·공정성 배너·기록 포함)
+.\app.ps1
+
+# 7-a') 또는 Windows Terminal로 나란히 실행
 .\open-both.ps1 -Exp superpowers
 
 # 7-b) 반복 측정 + 보고서 (근거용)
@@ -92,6 +98,8 @@ claudecode-ab-lab\
 ├─ reset.ps1          작업 폴더를 실습 원본 상태로 되돌리기
 ├─ run-headless.ps1   A/B 반복 측정
 ├─ report.ps1         측정 결과 → REPORT.md
+├─ app.ps1            GUI 앱 실행(처음이면 의존성 설치)
+├─ app\               Electron 앱 소스(docs\app.md)
 ├─ lib\common.ps1     공용 함수
 ├─ templates\settings.json   A/B 설정 폴더의 출발점
 ├─ empty-mcp.json     A용 빈 MCP 구성
@@ -106,10 +114,11 @@ claudecode-ab-lab\
       ├─ fixture\          실습 원본 프로젝트
       ├─ plugins\          B 전용 --plugin-dir 플러그인
       ├─ skills\           B 전용 스킬 원본
-      ├─ prompts\          지시문(.md)
+      ├─ prompts\          지시문(.md). 쪽별 변형은 <이름>.A.md / <이름>.B.md
       ├─ mcp-B.json        B 전용 MCP 서버
       ├─ config-B\         (git 제외) B 설정 폴더 · 로그인 토큰 포함
-      └─ results\          (git 제외) 반복 측정 결과
+      ├─ results\          (git 제외) 반복 측정 결과
+      └─ sessions\         (git 제외) GUI 앱 대화형 세션 기록
 
 <드라이브>:\cc-ab-work\<이름>\work-A, work-B   ← 실제 작업 폴더(저장소 밖)
 ```
@@ -123,6 +132,7 @@ claudecode-ab-lab\
 |---|---|
 | [docs/isolation.md](docs/isolation.md) | 격리 원리: Claude Code가 자동으로 읽는 것과 각각을 막는 방법, 막지 못하는 것 |
 | [docs/usage.md](docs/usage.md) | 단계별 상세 사용법: 실험 준비, B 구성 3가지, 나란히 실행, 반복 측정, 보고서 |
+| [docs/app.md](docs/app.md) | GUI 앱: 화면, 공통/예비 입력과 공정성 배너, 세션 기록, 키, 구조, 알려진 한계 |
 | [docs/methodology.md](docs/methodology.md) | 공정한 비교를 위한 규칙, 결과 해석, 영상 촬영 팁 |
 | [docs/scripts.md](docs/scripts.md) | 스크립트별 옵션과 예시 |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | 자주 겪는 문제와 해결 |
@@ -143,4 +153,8 @@ claudecode-ab-lab\
 | start / run-headless / report | 가짜 `claude`로 인자·환경 변수 복원·결과 수집·보고서 확인 |
 | 실제 `claude -p`에 한국어 지시문 파이프 전달 + JSON 결과 해석 | 확인 |
 | `syncClaudeAiPlugins: false`로 계정 플러그인 제외 | 공식 문서 기준. 실행 화면 `/plugin`으로 확인 권장 |
+| B `skills\` 동기화가 계정 스킬(`skills\synced\`)을 지우지 않음 | 확인 |
+| GUI 앱: 실행, 세션 시작, 한국어 지시문 A/B 전송(B 변형 포함), 전송 기록, 점검·반복 측정·보고서 화면 | 실제 claude(Haiku)로 확인 |
+| 반복 측정의 쪽별 지시문 변형(`.B.md`) → `conditions.json`·보고서 표시 | 확인 |
 | `open-both.ps1`의 Windows Terminal 분할, `--plugin-dir` 실제 로드, B `skills\` 인식 | **미확인** - 첫 실험에서 `/plugin`, `/context`로 확인 필요 |
+| GUI 앱의 이미지 붙여넣기(Alt+V), 상태 신호(OSC 7501) | **미확인 / 미지원** - [docs/app.md](docs/app.md) 9절 |

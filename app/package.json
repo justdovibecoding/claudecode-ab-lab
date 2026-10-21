@@ -1,0 +1,20 @@
+{
+  "name": "claudecode-ab-lab-app",
+  "version": "0.1.0",
+  "description": "Claude Code 스킬·플러그인 A/B 비교 실습 앱(Electron)",
+  "private": true,
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "set CC_AB_DEV=1&& electron .",
+    "test": "node --test test/logic.test.js"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "node-pty": "^1.1.0"
+  },
+  "devDependencies": {
+    "electron": "^45.0.0"
+  }
+}
