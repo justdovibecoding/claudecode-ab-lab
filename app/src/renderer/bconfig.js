@@ -41,15 +41,28 @@ const BConfig = (() => {
   }
 
   function versionCell(version, commit, dirty) {
-    const parts = [];
-    if (version) parts.push(version);
-    if (commit) parts.push(`@${short(commit, 12)}${dirty ? '(수정본)' : ''}`);
-    return el('td', { class: 'mono', text: parts.join(' ') || '-' });
+    const td = el('td', { class: 'mono' });
+    td.append(version || (commit ? '' : '-'));
+    // 버전 문자열에 이미 커밋이 들어 있으면(예: 6.4.2-8ca22dba9a94) 커밋은 따로 쓰지 않는다.
+    if (commit && !(version && version.includes(short(commit, 7)))) {
+      td.append(el('div', { class: 'sub', text: `@${short(commit, 12)}${dirty ? '(수정본)' : ''}` }));
+    } else if (dirty) td.append(el('div', { class: 'sub', text: '(수정본)' }));
+    return td;
+  }
+
+  // 이름@마켓플레이스 → 이름(굵게) + 마켓플레이스(작게)
+  function nameCell(id) {
+    const at = id.lastIndexOf('@');
+    if (at <= 0) return el('td', { class: 'mono', text: id });
+    return el('td', { class: 'mono', title: id },
+      el('strong', { text: id.slice(0, at) }), el('div', { class: 'sub', text: `@${id.slice(at + 1)}` }));
   }
 
   function sourceCell(source, recorded) {
     const td = el('td', { title: source || '' });
-    td.append(document.createTextNode(short(source, 60) || '-'));
+    // 화면에는 https:// 와 .git 을 뺀 짧은 주소를, 전체 주소는 마우스를 올리면 보인다.
+    const display = (source || '').replace(/^https?:\/\//, '').replace(/\.git$/, '');
+    td.append(document.createTextNode(short(display, 60) || '-'));
     if (!recorded) td.append(' ', el('span', { class: 'badge warn', text: '기록 없음', title: 'B 터미널의 /plugin 등으로 넣어 출처·커밋이 기록되지 않았습니다' }));
     return td;
   }
@@ -65,7 +78,7 @@ const BConfig = (() => {
       const id = p.id;
       body.append(el('tr', {},
         el('td', {}, '설치 플러그인 ', el('span', { class: `badge ${p.enabled ? 'ok' : ''}`, text: p.enabled ? '켜짐' : '꺼짐' })),
-        el('td', { class: 'mono', text: id }),
+        nameCell(id),
         versionCell(p.version, p.commit),
         sourceCell(p.source, p.recorded),
         el('td', { class: 'actions' },
@@ -131,14 +144,18 @@ const BConfig = (() => {
     const r = await run('A/B 동등성 점검', { Action: 'equivalence' }, { refresh: false });
     if (!r) return;
     const ul = $('#bc-eq');
+    const notes = r.notes || [];
     ul.textContent = '';
-    ul.className = `eq ${r.ok ? 'ok' : 'bad'}`;
+    ul.className = `eq ${r.ok ? (notes.length ? 'info' : 'ok') : 'bad'}`;
     if (r.ok) {
       const n = r.details && r.details.syncedSkills ? r.details.syncedSkills.A : 0;
-      ul.append(el('li', { text: `통과: 같은 계정, 계정 스킬 ${n}개 동일, 설정 동일` }));
+      ul.append(el('li', { text: notes.length ? '통과: 같은 계정, 설정 동일' : `통과: 같은 계정, 계정 스킬 ${n}개 동일, 설정 동일` }));
     } else {
       for (const issue of r.issues) ul.append(el('li', { text: issue }));
     }
+    for (const note of notes) ul.append(el('li', { class: 'note-item', text: note }));
+    // 점검 사이에 로그인했을 수 있으니 왼쪽·위쪽 실험 정보(로그인 표시)도 새로 읽는다.
+    await guard(() => loadExperiments(state.exp.name));
   }
 
   function bind() {

@@ -176,7 +176,7 @@ function listResultRuns(expDir) {
       try { cond = readJson(path.join(dir, 'conditions.json')); } catch { /* 없음 */ }
       let judged = 0;
       try { judged = Object.keys(readJson(path.join(dir, 'judgments.json')).items || {}).length; } catch { /* 없음 */ }
-      return { name, prompt: cond.prompt || '', model: cond.model || '', count: resultKeys(dir).length, judged };
+      return { name, mode: cond.mode || 'AB', prompt: cond.prompt || '', model: cond.model || '', count: resultKeys(dir).length, judged };
     });
 }
 

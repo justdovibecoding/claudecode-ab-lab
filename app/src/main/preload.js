@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('lab', {
   listExperiments: () => call('exp:list'),
   readPrompt: (exp, name) => call('exp:prompt', exp, name),
   readReport: (exp) => call('exp:report', exp),
+  readDecision: (exp) => call('exp:decision', exp),
 
   startLive: (opts) => call('live:start', opts),
   stopLive: () => call('live:stop'),

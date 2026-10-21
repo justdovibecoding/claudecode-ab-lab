@@ -13,8 +13,11 @@ const Judging = (() => {
     const keep = sel.value;
     const runs = await api.listResults(state.exp.name);
     sel.textContent = '';
-    if (!runs.length) sel.append(new Option('반복 측정 결과 없음', ''));
-    for (const r of runs) sel.append(new Option(`${r.name} · 답안 ${r.count}개 · 판정 ${r.judged}`, r.name));
+    if (!runs.length) sel.append(new Option('측정·대화형 결과 없음', ''));
+    for (const r of runs) {
+      const kind = r.mode === 'live' ? '대화형 · ' : r.mode === 'AA' ? 'A/A · ' : '';
+      sel.append(new Option(`${kind}${r.name} · 답안 ${r.count}개 · 판정 ${r.judged}`, r.name));
+    }
     if (keep && runs.some((r) => r.name === keep)) sel.value = keep;
   }
 
@@ -63,7 +66,9 @@ const Judging = (() => {
       const changes = el('details', { class: 'changes' }, el('summary', { text: `변경 파일 ${item.changes.length}개` }),
         el('ul', {}, ...item.changes.map((c) => el('li', { text: c }))));
 
-      box.append(el('div', { class: 'jd-card' }, head, el('pre', { class: 'jd-text', text: item.result }), changes, verdict, note));
+      const text = el('div', { class: 'jd-text md' });
+      renderMarkdown(text, item.result);
+      box.append(el('div', { class: 'jd-card' }, head, text, changes, verdict, note));
     });
     renderSummary();
   }
@@ -93,8 +98,23 @@ const Judging = (() => {
     guard(loadRuns);
   }
 
+  // 측정을 고르면 바로 불러온다. 저장 안 한 판정이 있으면 한 번은 되돌리고 알리며, 같은 측정을 다시 고르면 버리고 바꾼다.
+  let pendingRun = null;
+  function onRunChange() {
+    const sel = $('#jd-run');
+    if (current && sel.value !== current.run && hasUnsaved() && pendingRun !== sel.value) {
+      pendingRun = sel.value;
+      sel.value = current.run;
+      toast('저장하지 않은 판정이 있습니다. "저장"을 누르거나, 같은 측정을 한 번 더 고르면 판정을 버리고 바꿉니다.', true);
+      return;
+    }
+    pendingRun = null;
+    load();
+  }
+
   function bind() {
     $('#jd-load').addEventListener('click', load);
+    $('#jd-run').addEventListener('change', onRunChange);
     $('#jd-save').addEventListener('click', save);
     $('#jd-reveal').addEventListener('change', renderItems);
   }

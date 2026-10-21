@@ -51,8 +51,19 @@ test('반복 측정 결과 목록·판정 읽기/저장, 확인 명령 수정', 
   fs.writeFileSync(path.join(run, 'B-1-changes.txt'), 'M a.txt\nA b.txt\n');
   fs.writeFileSync(path.join(run, 'B-1-check.txt'), '명령: x\n결과: 통과 · 종료 코드 0');
 
+  // 대화형 결과(save-live.ps1)도 같은 형식이고 mode 로만 구분된다.
+  const live = path.join(exp, 'results', '20261021-130000-live');
+  fs.mkdirSync(live, { recursive: true });
+  fs.writeFileSync(path.join(live, 'summary.csv'), 'x');
+  fs.writeFileSync(path.join(live, 'conditions.json'), '{"mode":"live","prompt":"live","model":"m"}');
+  for (const k of ['A-1', 'B-1']) fs.writeFileSync(path.join(live, `${k}.json`), '{}');
+
   const runs = lab.listResultRuns(exp);
-  assert.deepEqual(runs, [{ name: '20261021-120000-과제', prompt: '01-task', model: 'm', count: 2, judged: 0 }]);
+  assert.deepEqual(runs, [
+    { name: '20261021-130000-live', mode: 'live', prompt: 'live', model: 'm', count: 2, judged: 0 },
+    { name: '20261021-120000-과제', mode: 'AB', prompt: '01-task', model: 'm', count: 2, judged: 0 },
+  ]);
+  runs.shift();
 
   const data = lab.readRunItems(exp, runs[0].name, seq([0.0]));
   assert.equal(data.items.length, 2);
@@ -65,7 +76,7 @@ test('반복 측정 결과 목록·판정 읽기/저장, 확인 명령 수정', 
 
   const summary = lab.saveJudgments(exp, runs[0].name, { 'B-1': { verdict: 'pass', note: '좋음' } });
   assert.equal(summary.B.pass, 1);
-  assert.equal(lab.listResultRuns(exp)[0].judged, 1);
+  assert.equal(lab.listResultRuns(exp).find((r) => r.name === runs[0].name).judged, 1);
   assert.throws(() => lab.readRunItems(exp, '..'));
 
   assert.deepEqual(lab.updateExperimentCheck(exp, { command: 'npm test', timeoutSec: 120 }), { command: 'npm test', timeoutSec: 120 });
@@ -269,4 +280,36 @@ test('터미널 기록(asciicast v2): 머리말과 출력·크기·표시 줄', 
   assert.equal(lines[2][2], '100x30');
   assert.ok(lines[1][0] >= 1.4 && lines[1][0] < 5);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// ---------- 보고서 마크다운 ----------
+
+const MD = require('../src/shared/markdown');
+
+test('markdown: 제목·문단·목록·표·인용', () => {
+  const blocks = MD.parse([
+    '# 제목', '', '- 하나', '- **둘**', '  이어짐', '', '| 쪽 | 비용 |', '|---|---|', '| A | `0.2` |', '| B | a \\| b |',
+    '', '> 주의', '> 계속', '', '첫 줄', '둘째 줄', '', '---',
+  ].join('\r\n'));
+  assert.deepEqual(blocks.map((b) => b.type), ['h', 'ul', 'table', 'quote', 'p', 'hr']);
+  assert.deepEqual(blocks[1].items, ['하나', '**둘** 이어짐']);
+  assert.deepEqual(blocks[2].head, ['쪽', '비용']);
+  assert.deepEqual(blocks[2].rows, [['A', '`0.2`'], ['B', 'a | b']]);
+  assert.equal(blocks[3].text, '주의 계속');
+  assert.equal(blocks[4].text, '첫 줄 둘째 줄');
+});
+
+test('markdown: 인라인 코드·굵게·링크', () => {
+  assert.deepEqual(MD.inline('a `x` **b** [c](d.md) e'), [
+    { t: 'text', v: 'a ' }, { t: 'code', v: 'x' }, { t: 'text', v: ' ' }, { t: 'b', v: 'b' },
+    { t: 'text', v: ' ' }, { t: 'text', v: 'c' }, { t: 'text', v: ' e' },
+  ]);
+});
+
+test('markdown: 실제 REPORT.md 를 오류 없이 나눈다', () => {
+  const file = path.join(__dirname, '..', '..', 'experiments', 'superpowers', 'REPORT.md');
+  if (!fs.existsSync(file)) return;
+  const blocks = MD.parse(fs.readFileSync(file, 'utf8'));
+  assert.ok(blocks.some((b) => b.type === 'table' && b.rows.length));
+  assert.ok(blocks.some((b) => b.type === 'h' && b.level === 2));
 });

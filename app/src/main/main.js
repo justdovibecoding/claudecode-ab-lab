@@ -14,7 +14,7 @@ const media = require('./media');
 const APP_DIR = path.resolve(__dirname, '..', '..');
 const LAB_ROOT = lab.resolveLabRoot(process.env, APP_DIR);
 const SIDES = ['A', 'B'];
-const SCRIPTS = new Set(['doctor', 'reset', 'run-headless', 'report', 'new-exp', 'list-exp', 'b-config']);
+const SCRIPTS = new Set(['doctor', 'reset', 'run-headless', 'report', 'new-exp', 'list-exp', 'b-config', 'save-live']);
 const PERMISSION_MODES = new Set(['', 'manual', 'acceptEdits', 'auto', 'plan', 'dontAsk', 'bypassPermissions']);
 
 let win = null;
@@ -71,14 +71,17 @@ function killTerm(side) {
   }
 }
 
+// 세션을 끝내고 그 세션 이름(sessions\<이름>)을 돌려준다. 결과 저장(save-live)은 화면이 이어서 부른다.
 function stopLive() {
   for (const side of SIDES) killTerm(side);
+  const name = live ? path.basename(live.session.dir) : null;
   if (live) {
     if (live.rec) finishRecording().catch(() => { /* 화면이 먼저 닫힌 경우 */ });
     addMarker('end', '세션 종료');
     try { live.session.updateMeta({ endedAt: new Date().toISOString() }); } catch { /* 기록 실패는 무시 */ }
   }
   live = null;
+  return name;
 }
 
 // ---------- 표시(markers.jsonl) ----------
@@ -144,6 +147,10 @@ async function startLive({ exp, reset, permissionMode, sizes, mask }) {
   if (!claudeExe) throw new Error('claude.exe 를 찾지 못했습니다. Claude Code 설치를 확인하거나 CC_AB_CLAUDE 환경 변수로 경로를 지정하세요.');
   stopLive();
 
+  // 이전 세션을 "종료" 없이 닫았으면(창 닫기 등) 작업 폴더를 건드리기 전에 그 결과를 먼저 남긴다.
+  const pending = await runPs(scriptPath('save-live'), { Exp: exp, Pending: true }, { cwd: LAB_ROOT, env: psEnv() }).done;
+  if (pending.code !== 0) throw new Error(`이전 대화형 세션 결과를 남기지 못했습니다: ${pending.stderr || pending.stdout}`.trim());
+
   if (reset) {
     const r = await runPs(scriptPath('reset'), { Exp: exp }, { cwd: LAB_ROOT, env: psEnv() }).done;
     if (r.code !== 0) throw new Error(`작업 폴더 초기화 실패: ${r.stderr || r.stdout}`.trim());
@@ -157,6 +164,7 @@ async function startLive({ exp, reset, permissionMode, sizes, mask }) {
   const session = lab.createSession(lab.experimentDir(LAB_ROOT, exp), {
     experiment: exp, claudeExe, claudeVersion, reset: !!reset, permissionMode: permissionMode || '', launches,
     mask: !!mask, maskedWords: words.length,
+    autoSave: true, // 종료 때(또는 다음 초기화 전에) results\<세션>-live\ 로 결과를 남긴다(save-live.ps1)
   });
   live = { exp, session, launches, start: Date.now(), words, redactors: {}, flushTimers: {}, casts: {}, rec: null };
   addMarker('start', '세션 시작');
@@ -225,6 +233,12 @@ function registerIpc() {
   handle('exp:report', (exp) => {
     const file = path.join(lab.experimentDir(LAB_ROOT, exp), 'REPORT.md');
     return fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+  });
+  // 판정 카드 자료(report.ps1 이 쓰는 decision.json). PowerShell 이 BOM 을 붙일 수 있어 떼고 읽는다.
+  handle('exp:decision', (exp) => {
+    const file = path.join(lab.experimentDir(LAB_ROOT, exp), 'decision.json');
+    if (!fs.existsSync(file)) return null;
+    try { return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, '')); } catch { return null; }
   });
 
   handle('live:start', (opts) => startLive(opts || {}));
@@ -376,7 +390,7 @@ function createWindow() {
     minWidth: 1100,
     minHeight: 700,
     title: 'Claude Code A/B 랩',
-    backgroundColor: '#E9ECF1',
+    backgroundColor: '#050505',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -427,13 +441,27 @@ function createWindow() {
         fs.writeFileSync(process.env.CC_AB_SNAPSHOT, img.toPNG());
         testLog('snapshot saved');
       }
+      stopLive();  // 세션을 띄운 점검이면 터미널을 먼저 닫아야 앱이 끝난다
       app.quit();
     });
   }
   win.on('closed', () => { win = null; });
 }
 
+// 앱은 하나만 띄운다. 두 개가 뜨면 같은 작업 폴더를 서로 초기화해 다른 쪽 세션의 작업을 지울 수 있다.
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (!win) return;
+    if (win.isMinimized()) win.restore();
+    win.focus();
+  });
+}
+
 app.whenReady().then(() => {
+  if (!gotLock) return;
   claudeExe = resolveClaude();
   if (claudeExe) {
     try {

@@ -83,16 +83,61 @@ function el(tag, attrs, ...children) {
   return node;
 }
 
+// 점검·측정 출력 줄의 머리말([OK]/[주의]/[오류]/[정보], == 제목 ==)로 색을 정한다.
+function lineClass(line) {
+  if (/^\s*\[(OK|통과)\]/.test(line)) return 'ok';
+  if (/^\s*\[주의\]|^\s*(경고|WARNING):/i.test(line)) return 'warn';
+  if (/^\s*\[(오류|실패)\]/.test(line)) return 'bad';
+  if (/^\s*\[정보\]/.test(line)) return 'info';
+  if (/^\s*==.*==\s*$/.test(line)) return 'head';
+  return '';
+}
+
 function appendOut(out, line, isErr) {
-  if (isErr) {
+  const cls = isErr ? 'err' : lineClass(line);
+  if (cls) {
     const span = document.createElement('span');
-    span.className = 'err';
+    span.className = cls;
     span.textContent = line + '\n';
     out.appendChild(span);
   } else {
     out.appendChild(document.createTextNode(line + '\n'));
   }
   out.scrollTop = out.scrollHeight;
+}
+
+// 판정 낱말(채택/조건부 채택/보류/비채택)에 붙일 색 클래스
+function verdictClass(text) {
+  if (/비채택/.test(text)) return 'verdict-reject';
+  if (/보류|조건부/.test(text)) return 'verdict-hold';
+  if (/채택/.test(text)) return 'verdict-adopt';
+  return undefined;
+}
+
+// 마크다운(보고서·답안)을 요소로 그린다. 글자는 textContent 로만 넣는다.
+function renderMarkdown(box, text) {
+  const M = window.AbMarkdown;
+  const inline = (s) => M.inline(s).map((p) => (p.t === 'code' ? el('code', { text: p.v }) : p.t === 'b' ? el('strong', { class: verdictClass(p.v), text: p.v }) : p.v));
+  box.textContent = '';
+  for (const b of M.parse(text)) {
+    if (b.type === 'h') box.append(el(`h${Math.min(b.level, 4)}`, {}, ...inline(b.text)));
+    else if (b.type === 'p') box.append(el('p', {}, ...inline(b.text)));
+    else if (b.type === 'ul') box.append(el('ul', {}, ...b.items.map((it) => el('li', {}, ...inline(it)))));
+    else if (b.type === 'quote') box.append(el('blockquote', {}, ...inline(b.text)));
+    else if (b.type === 'code') box.append(el('pre', { text: b.text }));
+    else if (b.type === 'hr') box.append(el('hr'));
+    else if (b.type === 'table') {
+      const cell = (tag, c) => {
+        const node = el(tag, {}, ...inline(c));
+        // 판정 카드의 결론 칸을 색으로 구분한다.
+        if (tag === 'td' && verdictClass(c)) node.classList.add(verdictClass(c));
+        return node;
+      };
+      box.append(el('div', { class: 'tbl' }, el('table', {},
+        el('thead', {}, el('tr', {}, ...b.head.map((c) => cell('th', c)))),
+        el('tbody', {}, ...b.rows.map((r) => el('tr', {}, ...r.map((c) => cell('td', c))))))));
+    }
+  }
 }
 
 // PowerShell 스크립트를 실행하고 출력을 out 에 흘린다. done 은 종료 코드로 끝난다.
@@ -124,26 +169,12 @@ api.onScriptDone(({ runId, code }) => {
 
 async function loadExperiments(keep) {
   state.exps = await api.listExperiments();
-  const list = $('#exp-list');
-  list.textContent = '';
-  for (const e of state.exps) {
-    const li = document.createElement('li');
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.dataset.exp = e.name;
-    const name = document.createElement('span');
-    name.textContent = e.name;
-    const sub = document.createElement('span');
-    sub.className = 'sub';
-    const parts = [...e.plugins.map((p) => `플러그인 ${p}`), ...e.skills.map((s) => `스킬 ${s}`)];
-    if (e.installed) parts.push('/plugin 설치');
-    sub.textContent = parts.join(' · ') || 'B 비교 대상 없음';
-    btn.append(name, sub);
-    btn.addEventListener('click', () => selectExperiment(e.name));
-    li.appendChild(btn);
-    list.appendChild(li);
+  const select = $('#exp-select');
+  select.replaceChildren(...state.exps.map((e) => el('option', { value: e.name, text: e.name })));
+  if (!state.exps.length) {
+    $('#exp-card').hidden = true;
+    toast('실험이 없습니다. "새 실험"으로 만드세요.');
   }
-  if (!state.exps.length) toast('실험이 없습니다. "새 실험"으로 만드세요.');
   const target = keep && state.exps.find((e) => e.name === keep) ? keep : state.exps[0] && state.exps[0].name;
   if (target) selectExperiment(target);
 }
@@ -158,7 +189,7 @@ function selectExperiment(name) {
   // 저장하지 않은 판정이 있으면 한 번은 막고 알린다. 같은 실험을 다시 누르면 버리고 바꾼다.
   if (state.exp && state.exp.name !== name && Judging.hasUnsaved() && state.discardTarget !== name) {
     state.discardTarget = name;
-    toast(`저장하지 않은 판정이 있습니다. "판정 저장"을 누르거나, ${name} 을(를) 한 번 더 누르면 판정을 버리고 바꿉니다.`, true);
+    toast(`저장하지 않은 판정이 있습니다. "판정 저장"을 누르거나, ${name} 을(를) 한 번 더 고르면 판정을 버리고 바꿉니다.`, true);
     return;
   }
   state.discardTarget = null;
@@ -166,12 +197,24 @@ function selectExperiment(name) {
   // 판정 중인 화면, 고른 지시문, 편집 중인 확인 명령은 그대로 둔다.
   const same = !!state.exp && state.exp.name === name;
   state.exp = e;
-  for (const btn of $$('#exp-list button')) btn.setAttribute('aria-current', String(btn.dataset.exp === name));
+  $('#exp-select').value = name;
   $('#exp-title').textContent = e.name;
   const b = [...e.plugins.map((p) => `플러그인 ${p}`), ...e.skills.map((s) => `스킬 ${s}`)];
   if (e.installed) b.push('/plugin 설치');
-  $('#exp-meta').textContent =
-    `${e.description ? e.description + ' · ' : ''}모델 ${e.model || '-'} · B: ${b.join(', ') || '비교 대상 없음'} · B 로그인 ${e.bLogin ? '됨' : '안 됨'} · 측정 ${e.results}회`;
+  // 콤보박스 아래에는 고른 실험 하나만 보여 준다.
+  const card = $('#exp-card');
+  card.querySelector('.name').textContent = e.name;
+  card.querySelector('.sub').textContent = b.join(' · ') || 'B 비교 대상 없음';
+  card.title = e.description || '';
+  card.hidden = false;
+  const chip = (text, cls) => el('span', { class: `meta-chip ${cls || ''}`.trim(), text });
+  $('#exp-meta').replaceChildren(
+    ...(e.description ? [el('span', { class: 'desc', text: e.description, title: e.description })] : []),
+    el('span', { class: 'chips' },
+      chip(e.model || '모델 기본값'),
+      chip(`B: ${b.join(', ') || '비교 대상 없음'}`, b.length ? '' : 'bad'),
+      chip(`B 로그인 ${e.bLogin ? '됨' : '안 됨'}`, e.bLogin ? 'ok' : 'bad'),
+      chip(`측정 ${e.results}회`)));
 
   for (const sel of [$('#prompt-file'), $('#hl-prompt')]) {
     const keep = same ? sel.value : '';
@@ -240,11 +283,20 @@ function makeTerm(side) {
     fontSize: 13,
     cursorBlink: true,
     scrollback: 5000,
-    theme: { background: '#0F1115', foreground: '#D6DAE0' },
+    // 차분한 무채색 테마. 배경은 .term 과 같게 둔다.
+    theme: {
+      background: '#0B0D0F', foreground: '#D4D8DB', cursor: '#3DDC6F', cursorAccent: '#0B0D0F',
+      selectionBackground: '#3A4A5A',
+      black: '#16191C', red: '#F07B72', green: '#3DDC6F', yellow: '#E8B84A', blue: '#6CA6E8', magenta: '#C49BE8', cyan: '#5CC8C2', white: '#C4C9CD',
+      brightBlack: '#6B737A', brightRed: '#FF9A92', brightGreen: '#7FE69C', brightYellow: '#F2CE7A', brightBlue: '#94C0F0', brightMagenta: '#D8B8F2', brightCyan: '#8ADBD6', brightWhite: '#F2F4F5',
+    },
   });
   const fit = new Fit();
   term.loadAddon(fit);
-  const el = pane(side, '.term');
+  // 여백은 바깥 .term 이 갖고, 터미널은 여백 없는 안쪽 상자에 연다. FitAddon 은 부모의 높이에서
+  // 부모 여백을 빼지 않아, 부모에 여백이 있으면 행 수를 많게 잡아 맨 아래 줄이 잘린다.
+  const el = pane(side, '.term').appendChild(document.createElement('div'));
+  el.className = 'term-host';
   term.open(el);
   term.onData((data) => {
     if (!state.running) return;
@@ -328,7 +380,7 @@ function renderStatus() {
   const on = !!(state.rec && state.rec.startedAt);
   rec.textContent = on ? `녹화 중 ${formatClock((Date.now() - state.rec.startedAt) / 1000)}` : (state.rec ? '녹화 준비 중…' : '녹화 안 함');
   rec.classList.toggle('on', on);
-  $('#btn-rec').textContent = state.rec ? '녹화 끝' : '녹화 시작';
+  $('#btn-rec').textContent = state.rec ? '녹화 끝' : '녹화';
   $('#btn-rec').classList.toggle('on', !!state.rec);
 }
 
@@ -443,9 +495,28 @@ async function startSession() {
 
 async function stopSession() {
   if (state.rec) await stopRecording();
-  await guard(() => api.stopLive());
+  const session = await guard(() => api.stopLive());
   state.running = false;
   renderStatus();
+  if (session && state.exp) await saveLive(state.exp.name, session);
+}
+
+// 끝난 세션의 결과(작업 폴더 사본·변경 목록·확인 명령·비용·토큰·최종 응답)를 results\<세션>-live\ 에 남긴다.
+// 토큰은 더 들지 않는다(Claude Code 대화 기록의 cost-state 를 읽음). 블라인드 판정·보고서에 참고용으로 나온다.
+async function saveLive(exp, session) {
+  toast('대화형 결과 저장 중… (작업 폴더 사본·확인 명령)');
+  const r = await guard(() => api.runJson('save-live', { Exp: exp, Session: session }));
+  if (!r) return;
+  if (!r.saved) { toast('양쪽 모두 대화가 없어 결과를 남기지 않았습니다.'); return; }
+  const side = (s) => {
+    const x = r.sides.find((v) => v.side === s);
+    if (!x || x.error) return `${s}: 대화 없음`;
+    const cost = Number.isFinite(x.cost) ? ` $${x.cost.toFixed(3)}` : '';
+    const check = x.check === true ? ' · 확인 통과' : x.check === false ? ' · 확인 실패' : '';
+    return `${s}:${cost} · 턴 ${x.turns} · 변경 ${x.changed}개${check}`;
+  };
+  toast(`대화형 결과 저장(${r.run}) — ${side('A')} / ${side('B')}. "결과" 화면에서 블라인드 판정할 수 있습니다.`);
+  await guard(() => loadExperiments(exp));
 }
 
 // 예비 입력창 내용을 터미널로 보낸다. 붙여넣기 모드를 켠 프로그램에는 붙여넣기로, 아니면 Ctrl+J 줄바꿈으로.
@@ -468,6 +539,7 @@ async function sendTo(sides) {
   await guard(() => api.logTurn({
     event: 'send',
     targets,
+    promptName: state.promptName || null, // 불러온 지시문 이름(대화형 결과의 확인 명령 %AB_PROMPT%·보고서용)
     common: state.prompt.common,
     sentA: sent.A === undefined ? null : sent.A,
     sentB: sent.B === undefined ? null : sent.B,
@@ -498,7 +570,50 @@ function showView(view) {
 async function showReport() {
   if (!state.exp) return;
   const text = await guard(() => api.readReport(state.exp.name));
-  $('#report-out').textContent = text || 'REPORT.md 가 아직 없습니다. 반복 측정 후 "보고서 만들기"를 누르세요.';
+  const out = $('#report-out');
+  out.classList.add('md');
+  if (text) renderMarkdown(out, text);
+  else out.textContent = 'REPORT.md 가 아직 없습니다. 반복 측정 후 "보고서 만들기"를 누르세요.';
+  renderDecision(await guard(() => api.readDecision(state.exp.name)));
+}
+
+// 판정 카드(decision.json)를 지표 타일로 보여 준다. 보고서 표와 같은 수치다.
+function renderDecision(d) {
+  const box = $('#decision');
+  box.textContent = '';
+  const o = d && d.overall;
+  box.hidden = !o;
+  if (!o) return;
+  const task = (d.tasks || [])[0] || {};
+  const noise = task.noise || {};
+  const pct = (x) => (Number.isFinite(x) ? `${x > 0 ? '+' : ''}${Math.round(x)}%` : '-');
+  const crit = d.criteria || {};
+  // 잡음과 기준 중 큰 값을 넘으면 의미 있는 차이로 본다(report.ps1 과 같은 규칙).
+  const over = (x, n, lim) => Number.isFinite(x) && Math.abs(x) > Math.max(n || 0, 10) && x > (lim || 0);
+  const tile = (label, value, note, tone) =>
+    el('div', { class: 'tile' }, el('span', { class: 'tile-label', text: label }), el('span', { class: 'tile-value', text: value }),
+      el('span', { class: `tile-note ${tone || ''}`.trim(), text: note }));
+  const qa = Number.isFinite(task.qualityA) ? `${Math.round(task.qualityA)}% → ${Math.round(task.qualityB)}%` : '-';
+  const qd = o.qualityDeltaPp;
+  const tasks = (d.tasks || []).map((t) => t.prompt).join(', ');
+  box.append(
+    el('div', { class: 'card-head' },
+      el('span', { class: 'sec-no', text: '[01]' }), el('h2', { text: '판정 카드' }),
+      el('span', { class: 'hint', text: `${tasks}${task.runsA ? ` · 쪽당 ${task.runsA}회` : ''}` }),
+      el('span', { class: `verdict-pill ${verdictClass(o.verdict) || ''}`.trim(), text: o.verdict })),
+    ...(o.reasons && o.reasons.length ? [el('p', { class: 'hint', text: `근거: ${o.reasons.join(' · ')}` })] : []),
+    ...((d.cautions || []).map((c) => el('div', { class: 'note warn', text: c }))),
+    el('div', { class: 'tiles' },
+      tile(`품질(${task.qualitySource === 'human' ? '사람 판정' : '확인 명령'})`, qa,
+        Number.isFinite(qd) ? `${qd > 0 ? '+' : ''}${Math.round(qd)}%p · 기준 ±${crit.minQualityGainPct ?? 10}%p` : '-',
+        Number.isFinite(qd) && Math.abs(qd) > (crit.minQualityGainPct ?? 10) ? (qd > 0 ? 'good' : 'bad') : ''),
+      tile('비용', pct(o.costDeltaPct), noise.costPct ? `잡음 ±${Math.round(noise.costPct)}%` : '잡음 모름',
+        over(o.costDeltaPct, noise.costPct, crit.maxCostIncreasePct) ? 'bad' : ''),
+      tile('시간', pct(o.timeDeltaPct), noise.timePct ? `잡음 ±${Math.round(noise.timePct)}%` : '잡음 모름',
+        over(o.timeDeltaPct, noise.timePct, crit.maxTimeIncreasePct) ? 'bad' : ''),
+      tile('대상 호출', Number.isFinite(o.targetRunPct) ? `${Math.round(o.targetRunPct)}%` : '-', `기준 ${crit.minTargetRunPct ?? 50}% 이상`,
+        Number.isFinite(o.targetRunPct) && o.targetRunPct < (crit.minTargetRunPct ?? 50) ? 'bad' : ''),
+      tile('상시 비용', Number.isFinite(o.firstContextDeltaTokens) ? `+${Math.round(o.firstContextDeltaTokens).toLocaleString()}` : '-', '토큰 / 세션')));
 }
 
 function needExp() {
@@ -508,6 +623,11 @@ function needExp() {
 
 function bind() {
   $('#btn-refresh').addEventListener('click', () => guard(() => loadExperiments(state.exp && state.exp.name)));
+  $('#exp-select').addEventListener('change', (ev) => {
+    selectExperiment(ev.target.value);
+    // 바꾸지 못했으면(세션 중, 저장 안 한 판정) 콤보박스를 지금 실험으로 되돌린다.
+    if (state.exp) ev.target.value = state.exp.name;
+  });
   $('#btn-new-toggle').addEventListener('click', () => { $('#new-exp').hidden = !$('#new-exp').hidden; });
   $('#new-exp').addEventListener('submit', async (ev) => {
     ev.preventDefault();
@@ -636,12 +756,22 @@ function bind() {
     if (!needExp()) return;
     const out = $('#report-out');
     out.textContent = '';
+    out.classList.remove('md');  // 실행 중에는 로그로 보이고, 끝나면 보고서를 다시 그린다
     const code = await guard(() => runScript('report', { Exp: state.exp.name }, out));
     if (code === 0) showReport();
   });
 }
 
+// 툴바의 펼침 메뉴(<details class="pop">): 바깥을 누르거나 Esc 를 누르면 닫는다.
+function bindPopovers() {
+  const closeAll = (except) => { for (const d of $$('details.pop[open]')) if (d !== except) d.open = false; };
+  document.addEventListener('pointerdown', (ev) => closeAll(ev.target.closest('details.pop')));
+  document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') closeAll(null); });
+}
+
 async function init() {
+  Layout.init();
+  bindPopovers();
   for (const side of SIDES) makeTerm(side);
   loadPrefs();
   bind();
