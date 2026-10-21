@@ -1,0 +1,16 @@
+{
+  "name": "superpowers",
+  "description": "superpowers 플러그인 유무 비교 (버그 수정 + 기능 추가 과제)",
+  "model": "claude-opus-5-5",
+  "createdAt": "2026-10-21",
+  "check": {
+    "command": "npm test && node --test D:/_vibecoding/claudecode-ab-lab/experiments/superpowers/check/hidden.test.js",
+    "timeoutSec": 300
+  },
+  "decision": {
+    "minQualityGainPct": 10,
+    "maxCostIncreasePct": 30,
+    "maxTimeIncreasePct": 50,
+    "minTargetRunPct": 50
+  }
+}

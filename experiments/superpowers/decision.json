@@ -1,0 +1,54 @@
+{
+    "experiment":  "superpowers",
+    "generatedAt":  "2026-10-21 19:42:00",
+    "criteria":  {
+                     "minQualityGainPct":  10,
+                     "maxCostIncreasePct":  30,
+                     "maxTimeIncreasePct":  50,
+                     "minTargetRunPct":  50
+                 },
+    "overall":  {
+                    "verdict":  "비채택",
+                    "reasons":  [
+                                    "품질 하락(-60%p)"
+                                ],
+                    "qualityDeltaPp":  -60,
+                    "costDeltaPct":  50.320077796325457,
+                    "timeDeltaPct":  12.737293325168389,
+                    "targetRunPct":  100,
+                    "firstContextDeltaTokens":  2173.5999999999985
+                },
+    "tasks":  [
+                  {
+                      "prompt":  "01-task",
+                      "run":  "20261021-192244-01-task",
+                      "runsA":  5,
+                      "runsB":  5,
+                      "qualitySource":  "check",
+                      "qualityA":  100,
+                      "qualityB":  40,
+                      "qualityDeltaPp":  -60,
+                      "costA":  0.22306452000000002,
+                      "costB":  0.33531076,
+                      "costDeltaPct":  50.320077796325457,
+                      "secondsA":  65.320000000000007,
+                      "secondsB":  73.64,
+                      "timeDeltaPct":  12.737293325168389,
+                      "targetRunPct":  100,
+                      "firstContextDeltaTokens":  2173.5999999999985,
+                      "noise":  {
+                                    "run":  "20261021-191516-01-task-AA",
+                                    "costPct":  23.527474531449453,
+                                    "timePct":  26.85861624409111,
+                                    "qualityPp":  33.333333333333343
+                                },
+                      "verdict":  "비채택",
+                      "reasons":  [
+                                      "품질 하락(-60%p)"
+                                  ]
+                  }
+              ],
+    "cautions":  [
+
+                 ]
+}
