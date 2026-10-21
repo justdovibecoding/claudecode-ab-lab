@@ -95,13 +95,15 @@ $checkTimeout = if ($e.Meta.check -and $e.Meta.check.timeoutSec) { [int]$e.Meta.
 if ($checkCmd) { Write-Host "확인 명령: $checkCmd (제한 $checkTimeout 초)" }
 
 $oldConfig = $env:CLAUDE_CONFIG_DIR
-$oldOutputEncoding = $OutputEncoding
+$oldOutputEncoding = $global:OutputEncoding
 $oldConsoleEncoding = [Console]::OutputEncoding
 $rows = @()
 $streams = @()
 try {
-    # PowerShell 5.1은 파이프 기본 인코딩이 ASCII라서 한국어 지시문이 깨진다.
-    $OutputEncoding = $Utf8NoBom
+    # PowerShell 5.1은 파이프 기본 인코딩이 ASCII라서 한국어 지시문이 깨진다(한글이 ?로 바뀜).
+    # 외부 프로그램 파이프는 전역 $OutputEncoding 을 쓰므로 전역에 설정해야 한다. 스크립트 범위에만 두면
+    # -File 실행(앱)에서는 맞지만 대화형 프롬프트에서 .\run-headless.ps1 로 부르면 ASCII 그대로다.
+    $global:OutputEncoding = $Utf8NoBom
     [Console]::OutputEncoding = $Utf8NoBom
 
     for ($i = 1; $i -le $Runs; $i++) {
@@ -181,7 +183,7 @@ try {
     }
 } finally {
     $env:CLAUDE_CONFIG_DIR = $oldConfig
-    $OutputEncoding = $oldOutputEncoding
+    $global:OutputEncoding = $oldOutputEncoding
     [Console]::OutputEncoding = $oldConsoleEncoding
 }
 

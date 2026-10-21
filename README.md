@@ -166,7 +166,7 @@ claudecode-ab-lab\
 | 스크립트 구문 검사(PowerShell 5.1) | 통과 |
 | setup / new-exp / list-exp / reset / doctor | 임시 폴더에서 실행 확인 |
 | start / run-headless / report | 가짜 `claude`로 인자·환경 변수 복원·결과 수집·보고서 확인 |
-| 실제 `claude -p`에 한국어 지시문 파이프 전달 + JSON 결과 해석 | 확인 |
+| 실제 `claude -p`에 한국어 지시문 파이프 전달 + JSON 결과 해석 | 확인. 대화형 PowerShell 프롬프트에서 실행할 때 한글이 `?`로 깨지던 문제(2026-10-21 이전 측정)는 전역 `$OutputEncoding`으로 수정, 실제 콘솔 창에서 확인 |
 | `syncClaudeAiPlugins: false`로 계정 플러그인 제외 | 공식 문서 기준. 실행 화면 `/plugin`으로 확인 권장 |
 | B `skills\` 동기화가 계정 스킬(`skills\synced\`)을 지우지 않음 | 확인 |
 | GUI 앱: 실행, 세션 시작, 한국어 지시문 A/B 전송(B 변형 포함), 전송 기록, 점검·반복 측정·보고서 화면 | 실제 claude(Haiku)로 확인 |
