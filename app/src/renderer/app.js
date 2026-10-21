@@ -128,6 +128,16 @@ function selectExperiment(name) {
   }
   const e = state.exps.find((x) => x.name === name);
   if (!e) return;
+  // 저장하지 않은 판정이 있으면 한 번은 막고 알린다. 같은 실험을 다시 누르면 버리고 바꾼다.
+  if (state.exp && state.exp.name !== name && Judging.hasUnsaved() && state.discardTarget !== name) {
+    state.discardTarget = name;
+    toast(`저장하지 않은 판정이 있습니다. "판정 저장"을 누르거나, ${name} 을(를) 한 번 더 누르면 판정을 버리고 바꿉니다.`, true);
+    return;
+  }
+  state.discardTarget = null;
+  // 같은 실험을 다시 고르는 경우(측정 종료·B 구성 변경 뒤 목록 새로 읽기)에는 정보만 갱신하고
+  // 판정 중인 화면, 고른 지시문, 편집 중인 확인 명령은 그대로 둔다.
+  const same = !!state.exp && state.exp.name === name;
   state.exp = e;
   for (const btn of $$('#exp-list button')) btn.setAttribute('aria-current', String(btn.dataset.exp === name));
   $('#exp-title').textContent = e.name;
@@ -137,12 +147,18 @@ function selectExperiment(name) {
     `${e.description ? e.description + ' · ' : ''}모델 ${e.model || '-'} · B: ${b.join(', ') || '비교 대상 없음'} · B 로그인 ${e.bLogin ? '됨' : '안 됨'} · 측정 ${e.results}회`;
 
   for (const sel of [$('#prompt-file'), $('#hl-prompt')]) {
+    const keep = same ? sel.value : '';
     sel.textContent = '';
     if (sel.id === 'prompt-file') sel.appendChild(new Option('지시문 불러오기…', ''));
     for (const p of e.prompts) {
       const mark = [p.hasA ? 'A변형' : '', p.hasB ? 'B변형' : ''].filter(Boolean).join(',');
       sel.appendChild(new Option(mark ? `${p.name} (${mark})` : p.name, p.name));
     }
+    if (keep && e.prompts.some((p) => p.name === keep)) sel.value = keep;
+  }
+  if (same) {
+    Judging.onSameExperiment();
+    return;
   }
   $('#hl-check').value = e.check.command;
   $('#hl-check-timeout').value = e.check.timeoutSec;

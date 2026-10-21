@@ -15,7 +15,7 @@ $old = $env:CLAUDE_CONFIG_DIR
 try {
     $env:CLAUDE_CONFIG_DIR = $config
     if ($Logout) {
-        & claude auth logout
+        & $ClaudeCmd auth logout
         return
     }
     $s = Get-AuthStatus $config
@@ -24,7 +24,7 @@ try {
         return
     }
     Write-Host "[$label] 로그인을 시작합니다. 설정 폴더: $config"
-    & claude auth login
+    & $ClaudeCmd auth login
     $s = Get-AuthStatus $config
     if ($s -and $s.loggedIn) { Write-Host "[$label] 로그인 완료 (방식: $($s.authMethod))" }
     else { Write-Warning "[$label] 로그인 상태를 확인하지 못했습니다. .\doctor.ps1 로 점검하세요." }

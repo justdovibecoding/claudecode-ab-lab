@@ -59,7 +59,9 @@ $cond = [ordered]@{
     skills         = @(Get-SkillDirs $e | ForEach-Object Name)
     installedB     = Test-Path (Join-Path $e.ConfigB 'plugins\installed_plugins.json')
     mcpB           = @((Get-Content (Join-Path $e.Dir 'mcp-B.json') -Raw | ConvertFrom-Json).mcpServers.PSObject.Properties | ForEach-Object Name)
-    claudeVersion  = (& claude --version) -join ' '
+    claudeVersion  = (& $ClaudeCmd --version) -join ' '
+    claudePath     = Get-ClaudePath
+    memoryReset    = $true   # 매 실행 전 작업 폴더 초기화 때 자동 메모리도 지움(Reset-Work)
     startedAt      = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
     bManifest      = @(Get-BManifest $e)
     check          = $e.Meta.check
@@ -100,7 +102,7 @@ try {
             Push-Location $l.Work
             Write-Host "[$Exp/$side] $i/$Runs 실행 중..."
             $global:LASTEXITCODE = 0  # 앞의 robocopy 종료 코드가 남지 않게
-            $raw = $texts[$side] | & claude @cliArgs
+            $raw = $texts[$side] | & $ClaudeCmd @cliArgs
             $exit = $LASTEXITCODE
             Pop-Location
 

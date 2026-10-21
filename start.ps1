@@ -41,7 +41,7 @@ Push-Location $l.Work
 try {
     $env:CLAUDE_CONFIG_DIR = $l.Config
     $Host.UI.RawUI.WindowTitle = "[$Exp/$Side]"
-    & claude @cliArgs
+    & $ClaudeCmd @cliArgs
 } finally {
     $env:CLAUDE_CONFIG_DIR = $oldConfig
     $Host.UI.RawUI.WindowTitle = $oldTitle

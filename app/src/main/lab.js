@@ -2,8 +2,11 @@
 const fs = require('fs');
 const path = require('path');
 
-// 영문·숫자·._- 만, 단 "." ".." 처럼 점으로만 된 이름은 상위 폴더를 가리키므로 거부한다.
+// 실험 이름: 영문·숫자·._- 만, 단 "." ".." 처럼 점으로만 된 이름은 상위 폴더를 가리키므로 거부한다.
 const NAME_RE = /^(?!\.+$)[A-Za-z0-9._-]+$/;
+// 지시문·결과 폴더 이름: 한글 등 허용. 경로 구분자, Windows 금지 문자, 제어 문자, 점으로만 된 이름만 거부한다.
+// eslint-disable-next-line no-control-regex
+const FILE_NAME_RE = /^(?!\.+$)[^\\/:*?"<>|\x00-\x1f]+$/;
 const VARIANT_RE = /\.(A|B)\.md$/i;
 
 function resolveLabRoot(env, appDir) {
@@ -12,6 +15,11 @@ function resolveLabRoot(env, appDir) {
 
 function assertName(name) {
   if (typeof name !== 'string' || !NAME_RE.test(name)) throw new Error(`잘못된 이름: ${name}`);
+  return name;
+}
+
+function assertFileName(name) {
+  if (typeof name !== 'string' || name.length > 200 || !FILE_NAME_RE.test(name)) throw new Error(`잘못된 이름: ${name}`);
   return name;
 }
 
@@ -54,7 +62,7 @@ function listPrompts(expDir) {
 
 // 지시문과 쪽별 변형(.A.md/.B.md). 없는 쪽은 null.
 function readPrompt(expDir, name) {
-  assertName(name);
+  assertFileName(name);
   const read = (file) => {
     const p = path.join(expDir, 'prompts', file);
     return fs.existsSync(p) ? fs.readFileSync(p, 'utf8').replace(/^﻿/, '') : null;
@@ -86,7 +94,8 @@ function listExperiments(labRoot) {
         skills: subdirs(path.join(dir, 'skills')),
         installed: fs.existsSync(path.join(dir, 'config-B', 'plugins', 'installed_plugins.json')),
         prompts: listPrompts(dir),
-        results: subdirs(path.join(dir, 'results')).length,
+        // 결과 화면·보고서와 같이 summary.csv 가 있는(끝까지 돈) 측정만 센다.
+        results: subdirs(path.join(dir, 'results')).filter((r) => fs.existsSync(path.join(dir, 'results', r, 'summary.csv'))).length,
         bLogin: fs.existsSync(path.join(dir, 'config-B', '.credentials.json')),
       };
     });
@@ -153,7 +162,7 @@ function resultKeys(runDir) {
 function listResultRuns(expDir) {
   const root = path.join(expDir, 'results');
   return subdirs(root)
-    .filter((name) => NAME_RE.test(name) && fs.existsSync(path.join(root, name, 'summary.csv')))
+    .filter((name) => FILE_NAME_RE.test(name) && fs.existsSync(path.join(root, name, 'summary.csv')))
     .sort()
     .reverse()
     .map((name) => {
@@ -167,7 +176,7 @@ function listResultRuns(expDir) {
 }
 
 function runDirOf(expDir, run) {
-  return path.join(expDir, 'results', assertName(run));
+  return path.join(expDir, 'results', assertFileName(run));
 }
 
 // 판정 화면용: 섞인 순서와 답안별 내용(최종 응답, 변경 목록, 확인 결과).
@@ -205,6 +214,6 @@ function saveJudgments(expDir, run, items) {
 }
 
 module.exports = {
-  NAME_RE, resolveLabRoot, assertName, experimentDir, listExperiments, listPrompts, readPrompt, createSession, stamp,
+  NAME_RE, FILE_NAME_RE, resolveLabRoot, assertName, assertFileName, experimentDir, listExperiments, listPrompts, readPrompt, createSession, stamp,
   updateExperimentCheck, listResultRuns, readRunItems, saveJudgments,
 };

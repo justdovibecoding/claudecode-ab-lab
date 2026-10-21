@@ -49,6 +49,11 @@ A/B 두 Claude Code 화면을 한 창에 나란히 띄우고, **공통 입력 �
 | 결과 | `report.ps1` 실행 후 `REPORT.md` 표시, 블라인드 판정 |
 
 B 구성을 바꾸면 진행 중인 대화형 세션의 B에는 바로 반영되지 않습니다. B의 "다시 시작"을 누르세요.
+
+- 지시문·결과 폴더 이름은 한글도 됩니다. 실험 이름만 영문·숫자·`._-`입니다.
+- 반복 측정이 끝나거나 B 구성을 바꾸면 실험 정보를 다시 읽지만, 판정 중인 카드·고른 지시문·편집 중인 확인 명령은 그대로 둡니다.
+  저장하지 않은 판정이 있는 채로 다른 실험을 고르면 한 번은 막고 알려 주며, 한 번 더 누르면 판정을 버리고 바꿉니다.
+- 세션 시작 때 "작업 폴더 초기화"를 켜 두면 그 작업 폴더의 자동 메모리도 지웁니다. 끄면 이어서 작업하므로 메모리도 남습니다.
 자세한 동작은 [usage.md](usage.md) 3절(B 구성)과 6절(확인 명령·동등성·판정)을 참고하세요.
 
 ## 3. 대화형 비교 순서
@@ -133,6 +138,8 @@ app\
 - **claude.exe 직접 실행**: npm 설치는 PATH에 껍데기(`claude.cmd`, `claude.ps1`)만 있으므로 그 옆
   `node_modules\@anthropic-ai\claude-code\bin\claude.exe`를 찾아 실행합니다. 설치 스크립트(네이티브) 설치는
   `%USERPROFILE%\.local\bin\claude.exe`. 다른 위치면 `CC_AB_CLAUDE` 환경 변수로 지정합니다.
+- **같은 claude 실행 파일**: 앱이 찾은 claude.exe 경로를 스크립트(점검·반복 측정·B 구성)에 `CC_AB_CLAUDE`로 넘겨,
+  대화형과 측정이 같은 버전으로 돌게 합니다. 반복 측정의 `conditions.json`에 `claudePath`로 남습니다.
 - **환경 변수**: 앱을 Claude Code 세션 안에서 띄워도 `CLAUDECODE`, `CLAUDE_CODE_SESSION_ID` 등 세션 변수와 기존
   `CLAUDE_CONFIG_DIR`은 자식 프로세스에 넘기지 않습니다. `COLORTERM=truecolor`를 양쪽에 똑같이 줍니다.
 - **보안**: 화면은 Node 기능 없이(`contextIsolation`, `sandbox`, `nodeIntegration: false`) 동작하고, 외부 페이지
@@ -146,7 +153,7 @@ app\
 | 이름 | 용도 |
 |---|---|
 | `CC_AB_LAB_ROOT` | 저장소 위치(기본: `app\`의 상위 폴더) |
-| `CC_AB_CLAUDE` | claude.exe 경로 직접 지정 |
+| `CC_AB_CLAUDE` | claude.exe 경로 직접 지정. PowerShell 스크립트도 이 값을 따름(`lib\common.ps1`의 `$ClaudeCmd`) |
 | `CC_AB_DEV=1` | F12 개발자 도구, 화면 로그를 콘솔에 출력(`.\app.ps1 -Dev`) |
 | `CC_AB_TEST_SCRIPT`, `CC_AB_SNAPSHOT`, `CC_AB_TEST_LOG` | 개발 점검용: 화면에서 스크립트 실행 → 화면 캡처 저장 → 종료 |
 

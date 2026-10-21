@@ -9,6 +9,15 @@ $EmptyMcp = Join-Path $LabRoot 'empty-mcp.json'
 $LabLocalFile = Join-Path $LabRoot 'lab.local.json'
 $Utf8NoBom = New-Object System.Text.UTF8Encoding $false
 
+# 모든 스크립트가 같은 claude 실행 파일을 쓰도록 한다. GUI 앱은 자기가 찾은 claude.exe 를 CC_AB_CLAUDE 로 넘긴다.
+# (npm 설치와 네이티브 설치가 함께 있으면 PATH 의 claude 와 앱의 claude 가 다른 버전일 수 있음)
+$ClaudeCmd = if ($env:CC_AB_CLAUDE -and (Test-Path $env:CC_AB_CLAUDE)) { $env:CC_AB_CLAUDE } else { 'claude' }
+
+function Get-ClaudePath {
+    $c = Get-Command $ClaudeCmd -ErrorAction SilentlyContinue
+    if ($c) { $c.Source } else { $null }
+}
+
 function Write-Utf8NoBom([string]$Path, [string]$Text) {
     [IO.File]::WriteAllText($Path, $Text, $Utf8NoBom)
 }
@@ -66,10 +75,78 @@ function Sync-Skills($Exp) {
     if (Test-Path $src) { Invoke-Mirror $src (Join-Path $Exp.ConfigB 'skills') @('synced', '.trash') }
 }
 
-# fixture\ 를 작업 폴더에 똑같이 덮어써서 출발점을 맞춘다.
+# fixture\ 를 작업 폴더에 똑같이 덮어써서 출발점을 맞추고, 그 작업 폴더의 자동 메모리도 비운다.
+# 메모리를 남기면 다음 회차·다음 촬영이 이전 실행에서 배운 것을 안고 시작해 회차가 독립이 아니게 된다.
 function Reset-Work($Exp, [string[]]$Sides = @('A', 'B')) {
     $fixture = Join-Path $Exp.Dir 'fixture'
-    foreach ($side in $Sides) { Invoke-Mirror $fixture (Get-WorkDir $Exp $side) }
+    foreach ($side in $Sides) {
+        $work = Get-WorkDir $Exp $side
+        Invoke-Mirror $fixture $work
+        [void](Clear-ProjectMemory (Get-SideConfig $Exp $side) $work)
+    }
+}
+
+function Get-SideConfig($Exp, [string]$Side) {
+    if ($Side -eq 'A') { $VanillaConfig } else { $Exp.ConfigB }
+}
+
+# ---------- 작업 폴더별 상태(설정 폴더 안) ----------
+# Claude Code 는 작업 폴더마다 <설정 폴더>\projects\<경로 이름>\ 에 대화 기록과 자동 메모리(memory\)를 둔다.
+# 경로 이름은 영문·숫자 외 문자를 모두 '-'로 바꾼 것(예: D:\cc-ab-work\x\work-A → D--cc-ab-work-x-work-A).
+
+function Get-ProjectSlug([string]$WorkDir) {
+    $WorkDir.TrimEnd('\') -replace '[^A-Za-z0-9]', '-'
+}
+
+function Get-ProjectMemoryDir([string]$ConfigDir, [string]$WorkDir) {
+    Join-Path $ConfigDir ('projects\' + (Get-ProjectSlug $WorkDir) + '\memory')
+}
+
+# 자동 메모리 파일 수(없으면 0)
+function Get-ProjectMemoryCount([string]$ConfigDir, [string]$WorkDir) {
+    $dir = Get-ProjectMemoryDir $ConfigDir $WorkDir
+    if (Test-Path $dir) { @(Get-ChildItem $dir -Recurse -File -Force).Count } else { 0 }
+}
+
+# 자동 메모리를 지운다. 지운 파일 수를 돌려준다. 대화 기록(*.jsonl)은 남긴다.
+function Clear-ProjectMemory([string]$ConfigDir, [string]$WorkDir) {
+    $dir = Get-ProjectMemoryDir $ConfigDir $WorkDir
+    if (-not (Test-Path $dir)) { return 0 }
+    $n = @(Get-ChildItem $dir -Recurse -File -Force).Count
+    Remove-Item -Recurse -Force $dir
+    $n
+}
+
+# .claude.json 의 작업 폴더별 항목(키는 슬래시 경로). 없으면 $null.
+function Get-ProjectEntry([string]$ConfigDir, [string]$WorkDir) {
+    $file = Join-Path $ConfigDir '.claude.json'
+    if (-not (Test-Path $file)) { return $null }
+    try { $j = Get-Content $file -Raw -Encoding UTF8 | ConvertFrom-Json } catch { return $null }
+    if (-not $j.projects) { return $null }
+    $key = $WorkDir.TrimEnd('\') -replace '\\', '/'
+    $p = $j.projects.PSObject.Properties | Where-Object { $_.Name -ieq $key } | Select-Object -First 1
+    if ($p) { $p.Value } else { $null }
+}
+
+# 설정 폴더에 사용자가 직접 넣을 수 있는 것(CLAUDE.md, agents, commands, output-styles, skills)의 파일별 해시.
+# skills\ 에서 계정 스킬(synced, .trash)과 $SkipSkills(실험이 넣은 스킬)는 뺀다.
+function Get-ConfigExtras([string]$ConfigDir, [string[]]$SkipSkills = @()) {
+    $h = @{}
+    $md = Join-Path $ConfigDir 'CLAUDE.md'
+    if (Test-Path $md) { $h['CLAUDE.md'] = (Get-FileHash $md -Algorithm SHA256).Hash }
+    foreach ($sub in 'agents', 'commands', 'output-styles', 'skills') {
+        $root = Join-Path $ConfigDir $sub
+        if (-not (Test-Path $root)) { continue }
+        Get-ChildItem $root -Recurse -File -Force | ForEach-Object {
+            $rel = $_.FullName.Substring($ConfigDir.TrimEnd('\').Length + 1)
+            if ($sub -eq 'skills') {
+                $top = ($rel -split '\\')[1]
+                if ($top -in @('synced', '.trash') + $SkipSkills) { return }
+            }
+            $h[$rel] = (Get-FileHash $_.FullName -Algorithm SHA256).Hash
+        }
+    }
+    $h
 }
 
 # 한쪽(A 또는 B)을 실행할 설정 폴더, 작업 폴더, claude 인자를 만든다.
@@ -99,7 +176,7 @@ function Get-AuthStatus([string]$ConfigDir) {
     $old = $env:CLAUDE_CONFIG_DIR
     try {
         $env:CLAUDE_CONFIG_DIR = $ConfigDir
-        $raw = & claude auth status
+        $raw = & $ClaudeCmd auth status
         ($raw -join "`n") | ConvertFrom-Json
     } catch { $null } finally { $env:CLAUDE_CONFIG_DIR = $old }
 }
@@ -152,7 +229,7 @@ function Invoke-ClaudeIn([string]$ConfigDir, [string[]]$Arguments) {
     try {
         $env:CLAUDE_CONFIG_DIR = $ConfigDir
         $global:LASTEXITCODE = 0
-        $lines = @(& claude @Arguments 2>&1 | ForEach-Object { "$_" })
+        $lines = @(& $ClaudeCmd @Arguments 2>&1 | ForEach-Object { "$_" })
         [pscustomobject]@{ Code = $LASTEXITCODE; Lines = $lines }
     } finally { $env:CLAUDE_CONFIG_DIR = $old }
 }
@@ -256,13 +333,50 @@ function Get-Equivalence($Exp) {
     $ignore = @('enabledPlugins', 'theme')
     $keys = @(@($sA.PSObject.Properties.Name) + @($sB.PSObject.Properties.Name) | Where-Object { $_ -and $_ -notin $ignore } | Sort-Object -Unique)
     $diffKeys = @()
+    # 파이프로 넘기면 빈 배열은 사라지고 원소 하나짜리 배열은 풀리므로 -InputObject 로 비교한다.
+    $toJson = { param($o, $k) if ($o) { ConvertTo-Json -InputObject $o.$k -Compress -Depth 10 } else { $null } }
     foreach ($k in $keys) {
-        $va = if ($sA) { $sA.$k | ConvertTo-Json -Compress -Depth 10 } else { $null }
-        $vb = if ($sB) { $sB.$k | ConvertTo-Json -Compress -Depth 10 } else { $null }
-        if ($va -ne $vb) { $diffKeys += $k }
+        if ((& $toJson $sA $k) -ne (& $toJson $sB $k)) { $diffKeys += $k }
     }
     $details.settingsDiff = $diffKeys
     if ($diffKeys.Count) { $issues += "settings.json 이 다름: $($diffKeys -join ', ') (enabledPlugins·theme 제외)" }
+
+    # 설정 폴더에 직접 넣은 것(CLAUDE.md, agents, commands, output-styles, skills). b-manifest 에 기록되지 않는 차이다.
+    $xA = Get-ConfigExtras $VanillaConfig
+    $xB = Get-ConfigExtras $Exp.ConfigB @(Get-SkillDirs $Exp | ForEach-Object Name)
+    $extraDiff = @()
+    foreach ($k in @(@($xA.Keys) + @($xB.Keys) | Sort-Object -Unique)) {
+        if (-not $xB.ContainsKey($k)) { $extraDiff += "A에만 $k" }
+        elseif (-not $xA.ContainsKey($k)) { $extraDiff += "B에만 $k" }
+        elseif ($xA[$k] -ne $xB[$k]) { $extraDiff += "내용 다름 $k" }
+    }
+    $details.configExtras = $extraDiff
+    if ($extraDiff.Count) {
+        $more = if ($extraDiff.Count -gt 8) { " 외 $($extraDiff.Count - 8)개" } else { '' }
+        $issues += "설정 폴더에 직접 넣은 파일이 다름(B 구성 기록에 없음): $(($extraDiff | Select-Object -First 8) -join ', ')$more"
+    }
+
+    # 작업 폴더별 권한·MCP 상태(.claude.json). 대화형에서 한쪽만 "항상 허용"을 누르면 다음 측정 조건이 달라진다.
+    # (폴더 신뢰 여부는 대화형 첫 화면에만 영향을 주고 헤드리스에는 무관해 비교하지 않는다)
+    $pA = Get-ProjectEntry $VanillaConfig (Get-WorkDir $Exp 'A')
+    $pB = Get-ProjectEntry $Exp.ConfigB (Get-WorkDir $Exp 'B')
+    $projDiff = @()
+    foreach ($k in 'allowedTools', 'mcpServers', 'enabledMcpjsonServers', 'disabledMcpjsonServers', 'hasClaudeMdExternalIncludesApproved') {
+        $va = & $toJson $pA $k
+        $vb = & $toJson $pB $k
+        # 한쪽만 아직 실행한 적이 없으면(항목 없음) 기본값과 같은 빈 값으로 본다.
+        $empty = @($null, 'null', '[]', '{}', 'false')
+        if (($va -in $empty) -and ($vb -in $empty)) { continue }
+        if ($va -ne $vb) { $projDiff += $k }
+    }
+    $details.projectDiff = $projDiff
+    if ($projDiff.Count) { $issues += "작업 폴더별 권한·MCP 상태(.claude.json)가 다름: $($projDiff -join ', '). 대화형에서 한쪽만 허용한 경우이므로 양쪽에 같은 답을 하세요" }
+
+    # 자동 메모리는 작업 폴더 초기화 때 지워지므로 동등성 문제로 보지 않고 개수만 남긴다(점검에서 따로 경고).
+    $details.memory = [ordered]@{
+        A = Get-ProjectMemoryCount $VanillaConfig (Get-WorkDir $Exp 'A')
+        B = Get-ProjectMemoryCount $Exp.ConfigB (Get-WorkDir $Exp 'B')
+    }
 
     [pscustomobject]@{ Ok = ($issues.Count -eq 0); Issues = $issues; Details = $details }
 }

@@ -63,7 +63,7 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 
 ```
 experiments\superpowers\
-├─ experiment.json   {"name","description","model","createdAt"}
+├─ experiment.json   {"name","description","model","createdAt","check":{"command":"","timeoutSec":600}}
 ├─ NOTES.md          기록 양식
 ├─ fixture\          실습 원본
 ├─ plugins\          B 전용 플러그인
@@ -72,7 +72,10 @@ experiments\superpowers\
 ├─ mcp-B.json        {"mcpServers": {}}
 ├─ config-B\settings.json   templates\settings.json 복사본
 └─ results\
+(나중에 생기는 것: b-manifest.json — B 구성 기록, sessions\ — 앱 대화형 기록, REPORT.md — 보고서)
 ```
+
+- 실험 이름은 영문·숫자·`._-`만 씁니다(`.`·`..`처럼 점으로만 된 이름은 거부). 지시문 파일 이름은 한글도 됩니다.
 
 ### 실습 원본(`fixture\`) 고르기
 
@@ -266,7 +269,8 @@ prompts\01-task.B.md    README를 읽고 요약해줘 (superpowers 스킬을 사
 동작:
 
 - 회차마다 A/B를 번갈아 실행합니다. 홀수 회차는 A→B, 짝수 회차는 B→A(순서 효과 완화).
-- 실행 직전마다 그쪽 작업 폴더를 `fixture\`로 초기화합니다.
+- 실행 직전마다 그쪽 작업 폴더를 `fixture\`로 초기화하고, 그 작업 폴더의 **자동 메모리**도 지웁니다
+  (`conditions.json`의 `memoryReset: true`). 남겨 두면 2회차부터 이전 회차가 배운 내용을 안고 시작해 회차가 독립 표본이 아닙니다.
 - `claude -p --output-format json --permission-mode <모드> --model <모델> --strict-mcp-config --mcp-config <구성> [--plugin-dir ...] [--max-budget-usd N]`로 실행합니다.
 
 권한 모드(`-PermissionMode`):
@@ -331,11 +335,11 @@ A/B에 **같은 모드**를 쓰는 한에서 과제에 맞는 모드를 고르�
 
 `results\` 아래 모든 측정을 모아 `experiments\superpowers\REPORT.md`에 측정별 비교표를 씁니다.
 
-| 쪽 | 성공/전체 | 평균 비용(USD) | 평균 턴 | 평균 시간(초) | 평균 출력 토큰 | 평균 변경 파일 |
-|---|---|---|---|---|---|---|
-| A | 3/3 | … | … | … | … | … |
-| B | 3/3 | … | … | … | … | … |
-| 차이 | | +12% | -20% | … | … | … |
+| 쪽 | 성공/전체 | 확인 통과 | 사람 판정(통과·부분/판정) | 평균 비용(USD) | 평균 턴 | 평균 시간(초) | 평균 출력 토큰 | 평균 변경 파일 |
+|---|---|---|---|---|---|---|---|---|
+| A | 3/3 | 1/3 | 1·1/3 | … | … | … | … | … |
+| B | 3/3 | 3/3 | 3·0/3 | … | … | … | … | … |
+| 차이 | | | | +12% | -20% | … | … | … |
 
 - 평균은 오류 없이 끝난 실행만으로 계산합니다.
 - 비용은 Claude Code가 보고한 **API 기준 추정값**입니다. 구독 요금제에서는 실제 청구액이 아닙니다.

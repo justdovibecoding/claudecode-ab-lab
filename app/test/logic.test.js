@@ -40,7 +40,7 @@ test('판정 집계와 검사', () => {
 test('반복 측정 결과 목록·판정 읽기/저장, 확인 명령 수정', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ablab-r-'));
   const exp = path.join(root, 'experiments', 'demo');
-  const run = path.join(exp, 'results', '20261021-120000-01-task');
+  const run = path.join(exp, 'results', '20261021-120000-과제');
   fs.mkdirSync(run, { recursive: true });
   fs.writeFileSync(path.join(exp, 'experiment.json'), '{"name":"demo","model":"m"}');
   fs.writeFileSync(path.join(run, 'summary.csv'), 'x');
@@ -51,7 +51,7 @@ test('반복 측정 결과 목록·판정 읽기/저장, 확인 명령 수정', 
   fs.writeFileSync(path.join(run, 'B-1-check.txt'), '명령: x\n결과: 통과 · 종료 코드 0');
 
   const runs = lab.listResultRuns(exp);
-  assert.deepEqual(runs, [{ name: '20261021-120000-01-task', prompt: '01-task', model: 'm', count: 2, judged: 0 }]);
+  assert.deepEqual(runs, [{ name: '20261021-120000-과제', prompt: '01-task', model: 'm', count: 2, judged: 0 }]);
 
   const data = lab.readRunItems(exp, runs[0].name, seq([0.0]));
   assert.equal(data.items.length, 2);
@@ -154,6 +154,8 @@ test('실험 목록과 지시문(변형 포함) 읽기, 세션 기록', () => {
   fs.writeFileSync(path.join(exp, 'prompts', '01-task.md'), '공통');
   fs.writeFileSync(path.join(exp, 'prompts', '01-task.B.md'), '공통 + 스킬');
   fs.writeFileSync(path.join(exp, 'prompts', '02-other.md'), '둘째');
+  fs.writeFileSync(path.join(exp, 'prompts', '과제.md'), '한글 지시문');
+  fs.mkdirSync(path.join(exp, 'results', 'cancelled'), { recursive: true }); // 취소돼 summary.csv 없음
   fs.mkdirSync(path.join(root, 'experiments', 'bad name'), { recursive: true });
 
   const list = lab.listExperiments(root);
@@ -161,13 +163,13 @@ test('실험 목록과 지시문(변형 포함) 읽기, 세션 기록', () => {
   assert.equal(list[0].description, '설명');
   assert.deepEqual(list[0].plugins, ['p1']);
   assert.deepEqual(list[0].skills, ['s1']);
-  assert.equal(list[0].results, 1);
+  assert.equal(list[0].results, 0); // results\r1 과 results\cancelled 모두 summary.csv 가 없음
   assert.equal(list[0].bLogin, false);
-  assert.deepEqual(list[0].prompts, [
-    { name: '01-task', hasA: false, hasB: true },
-    { name: '02-other', hasA: false, hasB: false },
-  ]);
+  assert.deepEqual(list[0].prompts.map((p) => p.name), ['01-task', '02-other', '과제']);
+  assert.deepEqual(list[0].prompts[0], { name: '01-task', hasA: false, hasB: true });
   assert.deepEqual(lab.readPrompt(exp, '01-task'), { common: '공통', A: null, B: '공통 + 스킬' });
+  assert.equal(lab.readPrompt(exp, '과제').common, '한글 지시문');
+  for (const bad of ['..', '.', 'a\\b', 'a/b', 'x:y', 'a*b']) assert.throws(() => lab.readPrompt(exp, bad), undefined, bad);
   assert.throws(() => lab.experimentDir(root, '..\\x'));
   assert.throws(() => lab.experimentDir(root, '..'));
   assert.throws(() => lab.experimentDir(root, '.'));

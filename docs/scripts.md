@@ -41,7 +41,8 @@
 - A/B 로그인 상태(방식·요금제)
 - A 설정 폴더의 `agents\`, `commands\`, `CLAUDE.md`
 - B: 실습 원본이 비었는지, 플러그인 폴더의 `.claude-plugin\plugin.json`, 스킬 폴더의 `SKILL.md`, `/plugin` 설치 기록, `mcp-B.json` 서버, 지시문 목록, 확인 명령
-- A/B 동등성: 계정·요금제, 계정 스킬 목록, settings.json(enabledPlugins·theme 제외)
+- B: A/B 작업 폴더에 남은 자동 메모리
+- A/B 동등성: 계정·요금제, 계정 스킬 목록, settings.json(enabledPlugins·theme 제외), 설정 폴더에 직접 넣은 파일, `.claude.json`의 작업 폴더별 권한·MCP
 
 결과 등급: `[OK]` 정상 · `[정보]` 확인만 · `[주의]` 비교에 영향 가능 · `[오류]` 고쳐야 함.
 
@@ -94,6 +95,7 @@
 | `-Side A\|B\|Both` | `Both` | 초기화할 쪽 |
 
 `robocopy fixture work-X /MIR /XF .gitkeep` — 작업 폴더에만 있는 파일은 지워집니다.
+그 작업 폴더의 자동 메모리(`<설정 폴더>\projects\<경로 이름>\memory\`)도 함께 지웁니다(대화 기록은 남김).
 
 ## run-headless.ps1
 
@@ -137,6 +139,8 @@
 
 모든 동작은 `CLAUDE_CONFIG_DIR=<실험>\config-B`로 `claude plugin ...`을 실행하거나 실험 폴더의 `plugins\`·`skills\`를
 바꿉니다. 기록은 `b-manifest.json`. 실패하면 오류 메시지와 함께 종료 코드 1.
+`-Url`·`-Ref`·`-Source`가 `-`로 시작하거나 `ext::` 주소면 거부하고(git 옵션 주입 방지), git 에는 `--` 구분자를 씁니다.
+`-SubPath`는 저장소 안 상대 경로만 받습니다(`..`, 드라이브, 절대 경로 거부).
 
 ## app.ps1
 
@@ -165,5 +169,10 @@
 | `Get-BManifest` / `Set-BManifestItem` / `Remove-BManifestItem` | B 구성 기록 읽기·쓰기 |
 | `Get-GitInfo` | 폴더의 git 커밋·수정 여부·원격 주소 |
 | `Get-SyncedSkills` | 설정 폴더의 claude.ai 계정 스킬 이름 목록 |
-| `Get-Equivalence` | A/B 동등성(계정·요금제·계정 스킬·settings.json) |
+| `Get-Equivalence` | A/B 동등성(계정·요금제·계정 스킬·settings.json·설정 폴더 추가 파일·작업 폴더별 권한) |
+| `$ClaudeCmd` / `Get-ClaudePath` | 쓸 claude 실행 파일(`CC_AB_CLAUDE`가 있으면 그것, 없으면 PATH 의 claude)과 그 경로 |
+| `Get-SideConfig` | 쪽별 설정 폴더(A: config-vanilla, B: config-B) |
+| `Get-ProjectSlug` / `Get-ProjectMemoryCount` / `Clear-ProjectMemory` | 작업 폴더별 기록 폴더 이름, 자동 메모리 개수·삭제 |
+| `Get-ProjectEntry` | `.claude.json`의 작업 폴더별 항목 |
+| `Get-ConfigExtras` | 설정 폴더에 직접 넣은 파일(CLAUDE.md, agents, commands, output-styles, skills)의 해시 |
 | `Invoke-CheckCommand` | 작업 폴더에서 확인 명령 실행(제한 시간, 종료 코드 0 = 통과) |

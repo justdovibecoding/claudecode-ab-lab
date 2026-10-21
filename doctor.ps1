@@ -38,8 +38,11 @@ function Test-ConfigDir([string]$Label, [string]$Dir) {
 Write-Host "== 공용 환경 ==" -ForegroundColor Cyan
 
 # Claude Code
-$claude = Get-Command claude -ErrorAction SilentlyContinue
-if ($claude) { Write-Check OK "claude: $((& claude --version) -join ' ') ($($claude.Source))" }
+$claude = Get-Command $ClaudeCmd -ErrorAction SilentlyContinue
+if ($claude) {
+    Write-Check OK "claude: $((& $ClaudeCmd --version) -join ' ') ($($claude.Source))"
+    if ($env:CC_AB_CLAUDE) { Write-Check 정보 "CC_AB_CLAUDE 로 지정한 실행 파일을 씀(GUI 앱과 같은 파일)" }
+}
 else { Write-Check 오류 'claude 명령을 찾을 수 없음 (Claude Code 설치 필요)' }
 
 # Windows Terminal (나란히 실행용, 없으면 창 2개로 대체)
@@ -125,10 +128,15 @@ if ($Exp) {
     if ($e.Meta.check -and $e.Meta.check.command) { Write-Check OK "확인 명령: $($e.Meta.check.command)" }
     else { Write-Check 정보 '확인 명령 없음 - 반복 측정에서 자동 품질 확인을 하려면 experiment.json 의 check.command 에 지정' }
 
+    foreach ($side in 'A', 'B') {
+        $n = Get-ProjectMemoryCount (Get-SideConfig $e $side) (Get-WorkDir $e $side)
+        if ($n) { Write-Check 주의 "$side 작업 폴더의 자동 메모리 $n 개가 남아 있음 - 다음 실행이 이전 내용을 기억한 채 시작. .\reset.ps1 -Exp $Exp 로 지워짐" }
+    }
+
     Write-Host ''
     Write-Host "== A/B 동등성 ==" -ForegroundColor Cyan
     $eq = Get-Equivalence $e
-    if ($eq.Ok) { Write-Check OK "같은 계정, 계정 스킬 $($eq.Details.syncedSkills.A)개 동일, settings.json 동일(enabledPlugins·theme 제외)" }
+    if ($eq.Ok) { Write-Check OK "같은 계정, 계정 스킬 $($eq.Details.syncedSkills.A)개 동일, settings.json·설정 폴더 추가 파일·작업 폴더별 권한 동일" }
     else { foreach ($issue in $eq.Issues) { Write-Check 주의 $issue } }
 }
 

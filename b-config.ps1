@@ -46,6 +46,25 @@ function Assert-PluginId([string]$Id) {
     if ($Id -notmatch '^[A-Za-z0-9._-]+(@[A-Za-z0-9._-]+)?$') { throw "잘못된 플러그인 이름: $Id" }
 }
 
+# git·claude 에 넘기는 값이 옵션(-…)으로 해석되지 않게 막는다. ext:: 는 명령을 실행하는 git 전송 방식이라 거부.
+function Assert-NotOption([string]$Value, [string]$Label) {
+    if ($Value -match '^\s*-') { throw "$Label 은(는) '-'로 시작할 수 없습니다: $Value" }
+    if ($Value -match '^\s*ext::') { throw "$Label 에 ext:: 주소는 쓸 수 없습니다." }
+}
+
+# 저장소 안 하위 경로: 상대 경로만, '..' 없이. 결과가 $Root 아래인지 다시 확인한다.
+function Resolve-SubPath([string]$Root, [string]$Sub) {
+    if (-not $Sub) { return $Root }
+    $norm = $Sub -replace '/', '\'
+    if ([IO.Path]::IsPathRooted($norm) -or $norm -match ':' -or ($norm -split '\\') -contains '..') {
+        throw "하위 경로는 저장소 안의 상대 경로여야 합니다('..', 드라이브, 절대 경로 불가): $Sub"
+    }
+    $full = [IO.Path]::GetFullPath((Join-Path $Root $norm))
+    $rootFull = [IO.Path]::GetFullPath($Root).TrimEnd('\') + '\'
+    if (-not $full.StartsWith($rootFull, [StringComparison]::OrdinalIgnoreCase)) { throw "하위 경로가 저장소 밖을 가리킵니다: $Sub" }
+    $full
+}
+
 function Get-Available {
     $r = Invoke-ClaudeIn $e.ConfigB @('plugin', 'list', '--available', '--json')
     $o = ConvertFrom-ClaudeJson $r.Lines
@@ -169,6 +188,7 @@ switch ($Action) {
     }
     'add-marketplace' {
         Assert-Arg $Source '-Source'
+        Assert-NotOption $Source '-Source'
         $r = Invoke-ClaudeIn $e.ConfigB @('plugin', 'marketplace', 'add', $Source)
         if ($r.Code) { throw "마켓플레이스 추가 실패: $($r.Lines -join ' ')" }
         Out-Result @{ added = $Source } "마켓플레이스 추가: $Source"
@@ -181,14 +201,17 @@ switch ($Action) {
     }
     'add-git' {
         Assert-Arg $Url '-Url'
+        Assert-NotOption $Url '-Url'
+        if ($Ref) { Assert-NotOption $Ref '-Ref' }
         if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw 'git 이 필요합니다.' }
         $tmp = Join-Path ([IO.Path]::GetTempPath()) ("ab-git-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
         try {
-            & git clone --quiet $Url $tmp 2>&1 | Out-Null
+            # '--' 뒤의 값은 옵션이 아니라 주소·폴더로만 해석된다.
+            & git clone --quiet -- $Url $tmp 2>&1 | Out-Null
             if ($LASTEXITCODE) { throw "git clone 실패: $Url" }
-            if ($Ref) { & git -C $tmp checkout --quiet $Ref 2>&1 | Out-Null; if ($LASTEXITCODE) { throw "git checkout 실패: $Ref" } }
+            if ($Ref) { & git -C $tmp checkout --quiet $Ref -- 2>&1 | Out-Null; if ($LASTEXITCODE) { throw "git checkout 실패: $Ref" } }
             $git = Get-GitInfo $tmp
-            $from = if ($SubPath) { Join-Path $tmp $SubPath } else { $tmp }
+            $from = Resolve-SubPath $tmp $SubPath
             $label = if ($SubPath) { "$Url#$SubPath" } else { $Url }
             $item = Add-LocalFolder $from $label $git
             Out-Result $item "추가함: $($item.kind) $($item.name) @ $($git.Commit.Substring(0, 12))"

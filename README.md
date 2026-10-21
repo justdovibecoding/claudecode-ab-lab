@@ -82,6 +82,7 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 | claude.ai 계정의 플러그인 동기화 | **제외** (`syncClaudeAiPlugins: false`) | **제외** |
 | claude.ai 계정 커넥터(MCP) | **제외** (`--strict-mcp-config` + 빈 구성) | **제외** (`mcp-B.json`에 적은 것만) |
 | 평소 `~/.claude`의 플러그인·스킬·훅·메모리 | 제외 | 제외 |
+| 랩 설정 폴더 안에 쌓이는 작업 폴더별 자동 메모리 | 작업 폴더 초기화 때 지움 | 작업 폴더 초기화 때 지움 |
 | 비교 대상 | 없음 | `plugins\`, `skills\`, `/plugin` 설치, `mcp-B.json` |
 
 "기본"을 **Claude Code 단독**(계정 스킬도 제외)으로 잡고 싶으면 `templates\settings.json`과
@@ -169,3 +170,6 @@ claudecode-ab-lab\
 | 품질 확인 명령 → 결과·보고서, 블라인드 판정 → `judgments.json`·보고서 | 가짜 claude 와 앱 화면으로 확인 |
 | A/B 동등성 점검(다른 계정·요금제·계정 스킬·설정 차이 감지) | 가짜 claude 로 확인 |
 | 마켓플레이스 추가(`add-marketplace`), 실행 확인이 필요한 플러그인 설치 | **미확인** |
+| 앱의 로그인 버튼(새 PowerShell 창), 한글 지시문·결과 이름, 판정 중 상태 보존 | 앱 화면으로 확인 |
+| 작업 폴더 초기화 때 자동 메모리 삭제·점검 경고, 동등성 확대(설정 폴더 추가 파일·작업 폴더별 권한) | 가짜 claude 로 확인. 폴더 이름 규칙은 실제 Claude Code 가 만든 폴더와 대조 |
+| Git 추가의 옵션 주입·경로 탈출 차단, 스크립트의 claude 실행 파일 통일(`CC_AB_CLAUDE`) | 확인 |

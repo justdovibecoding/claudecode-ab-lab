@@ -38,8 +38,9 @@ function scriptPath(name) {
   return path.join(LAB_ROOT, `${name}.ps1`);
 }
 
+// 스크립트도 앱과 같은 claude.exe 를 쓰도록 CC_AB_CLAUDE 로 넘긴다(lib\common.ps1 의 $ClaudeCmd).
 function psEnv() {
-  return buildChildEnv(process.env);
+  return buildChildEnv(process.env, null, claudeExe ? { CC_AB_CLAUDE: claudeExe } : {});
 }
 
 function checkSide(side) {
@@ -205,11 +206,15 @@ function registerIpc() {
     if (child) killTree(child.pid);
   });
 
+  // 새 콘솔 창에서 login.ps1 을 연다.
+  // - powershell 을 detached 로 직접 띄우면 표준 입력이 NUL 이라 -NoExit 이어도 바로 닫힌다 → cmd 의 start 로 새 콘솔을 만든다.
+  // - Node 가 인자를 다시 따옴표 처리하면 start 의 "제목"이 명령으로 해석되므로 windowsVerbatimArguments 로 그대로 넘긴다.
   handle('shell:login', (exp) => {
-    const params = ['-NoExit', '-ExecutionPolicy', 'Bypass', '-File', path.join(LAB_ROOT, 'login.ps1')];
-    if (exp) params.push('-Exp', lab.assertName(exp));
-    spawn('cmd.exe', ['/c', 'start', '"Claude Code 로그인"', 'powershell.exe', ...params], {
-      cwd: LAB_ROOT, env: psEnv(), detached: true, windowsHide: true,
+    const parts = ['start', '"Claude Code 로그인"', 'powershell.exe', '-NoExit', '-ExecutionPolicy', 'Bypass',
+      '-File', `"${path.join(LAB_ROOT, 'login.ps1')}"`];
+    if (exp) parts.push('-Exp', lab.assertName(exp));
+    spawn('cmd.exe', ['/d', '/s', '/c', `"${parts.join(' ')}"`], {
+      cwd: LAB_ROOT, env: psEnv(), windowsVerbatimArguments: true, detached: true, stdio: 'ignore', windowsHide: true,
     }).unref();
   });
   handle('shell:open', (target, exp) => {

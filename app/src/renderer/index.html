@@ -20,7 +20,7 @@
     </div>
     <form id="new-exp" class="new-exp" hidden>
       <label for="new-name">이름(영문·숫자·._-)</label>
-      <input id="new-name" type="text" required pattern="[A-Za-z0-9._\-]+">
+      <input id="new-name" type="text" required pattern="(?!\.+$)[A-Za-z0-9._\-]+" title="영문·숫자·. _ - 만, 점으로만 된 이름 제외">
       <label for="new-desc">설명</label>
       <input id="new-desc" type="text">
       <button type="submit" class="primary small">만들기</button>
