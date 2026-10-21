@@ -1,6 +1,7 @@
 ﻿# 실험의 지시문을 A, B에서 번갈아 N회씩 헤드리스(claude -p)로 실행하고 결과를 모은다.
 #   .\run-headless.ps1 -Exp superpowers -Prompt 01-task
 #   .\run-headless.ps1 -Exp superpowers -Prompt 01-task -Runs 5 -PermissionMode bypassPermissions -MaxBudgetUsd 2
+#   .\run-headless.ps1 -Exp superpowers -Prompt 01-task -Mode AA     # A/A 시험: 양쪽 모두 기본 환경(잡음 크기 측정)
 # -Prompt 는 prompts\ 안의 파일 이름(.md 생략 가능) 또는 파일 경로.
 param(
     [Parameter(Mandatory)][string]$Exp,
@@ -9,7 +10,9 @@ param(
     [string]$Model,
     [ValidateSet('acceptEdits', 'auto', 'plan', 'dontAsk', 'bypassPermissions')][string]$PermissionMode = 'acceptEdits',
     [double]$MaxBudgetUsd = 0,
-    [ValidateSet('A', 'B', 'Both')][string]$Side = 'Both'
+    [ValidateSet('A', 'B', 'Both')][string]$Side = 'Both',
+    # AB: 보통 비교. AA: B 열도 기본 환경(A 설정 폴더)으로 실행해 우연 변동(잡음)을 잰다. 결과는 A/B 와 같은 형식.
+    [ValidateSet('AB', 'AA')][string]$Mode = 'AB'
 )
 . (Join-Path $PSScriptRoot 'lib\common.ps1')
 
@@ -20,6 +23,7 @@ if (-not $promptFile) { throw "지시문을 찾을 수 없습니다: $Prompt" }
 $text = Get-Content $promptFile -Raw -Encoding UTF8
 if (-not ($text -replace '(?s)<!--.*?-->', '').Trim()) { throw "지시문이 비어 있습니다(주석만 있음): $promptFile" }
 $promptName = [IO.Path]::GetFileNameWithoutExtension($promptFile)
+if ($Mode -eq 'AA' -and $Side -ne 'Both') { throw 'A/A 시험(-Mode AA)은 -Side Both 로만 실행합니다.' }
 
 # 쪽별 변형: 01-task.md 옆에 01-task.A.md / 01-task.B.md 가 있으면 그쪽에는 변형을 보낸다
 # (예: B에만 "superpowers 스킬을 사용해줘" 를 덧붙임). 변형은 conditions.json 과 보고서에 표시된다.
@@ -28,7 +32,8 @@ $texts = @{}
 $override = @()
 foreach ($s in 'A', 'B') {
     $variantFile = "$promptBase.$s.md"
-    if (Test-Path $variantFile -PathType Leaf) {
+    # A/A 시험은 양쪽이 똑같아야 하므로 변형을 쓰지 않는다.
+    if ($Mode -ne 'AA' -and (Test-Path $variantFile -PathType Leaf)) {
         $texts[$s] = Get-Content $variantFile -Raw -Encoding UTF8
         if (-not ($texts[$s] -replace '(?s)<!--.*?-->', '').Trim()) { throw "변형 지시문이 비어 있습니다: $variantFile" }
         $override += $s
@@ -40,7 +45,7 @@ $sides = if ($Side -eq 'Both') { @('A', 'B') } else { @($Side) }
 $fixture = Join-Path $e.Dir 'fixture'
 
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-$outDir = Join-Path $e.Dir "results\$stamp-$promptName"
+$outDir = Join-Path $e.Dir "results\$stamp-$promptName$(if ($Mode -eq 'AA') { '-AA' })"
 New-Item -ItemType Directory -Force $outDir | Out-Null
 Copy-Item $promptFile (Join-Path $outDir 'prompt.md')
 foreach ($s in $override) { Copy-Item "$promptBase.$s.md" (Join-Path $outDir "prompt.$s.md") }
@@ -48,6 +53,7 @@ foreach ($s in $override) { Copy-Item "$promptBase.$s.md" (Join-Path $outDir "pr
 # 나중에 같은 조건으로 다시 돌릴 수 있게 실행 조건을 남긴다.
 $cond = [ordered]@{
     experiment     = $Exp
+    mode           = $Mode   # AA 면 B 열도 기본 환경
     prompt         = $promptName
     promptOverride = @($override)
     runs           = $Runs
@@ -65,14 +71,20 @@ $cond = [ordered]@{
     startedAt      = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
     bManifest      = @(Get-BManifest $e)
     check          = $e.Meta.check
+    decision       = $e.Meta.decision   # 측정 때의 판정 기준(나중에 기준을 바꿨는지 보고서가 확인)
     equivalence    = $null
     loaded         = $null   # 측정 뒤 채움: 쪽별로 실제 로드된 플러그인·스킬·에이전트·MCP(init 이벤트)
     targets        = $null   # 측정 뒤 채움: 비교 대상 = B에서만 로드된 것
 }
 
-# A/B 동등성(계정·계정 스킬·설정). 다르면 경고하고 조건에 남긴다(측정은 계속).
-Write-Host 'A/B 동등성 점검 중...'
-$eq = Get-Equivalence $e
+# A/B 동등성(계정·계정 스킬·설정). 다르면 경고하고 조건에 남긴다(측정은 계속). A/A 는 양쪽이 같은 설정 폴더라 건너뛴다.
+if ($Mode -eq 'AA') {
+    Write-Host 'A/A 시험: 양쪽 모두 기본 환경(config-vanilla)으로 실행합니다.'
+    $eq = [pscustomobject]@{ Ok = $true; Issues = @() }
+} else {
+    Write-Host 'A/B 동등성 점검 중...'
+    $eq = Get-Equivalence $e
+}
 $cond.equivalence = [ordered]@{ ok = $eq.Ok; issues = @($eq.Issues) }
 if (-not $eq.Ok) { foreach ($issue in $eq.Issues) { Write-Warning "A/B 동등성: $issue" } }
 Write-Utf8NoBom (Join-Path $outDir 'conditions.json') ($cond | ConvertTo-Json -Depth 6)
@@ -96,8 +108,10 @@ try {
         # 순서 효과(캐시 등)를 줄이려고 회차마다 A/B 순서를 바꾼다.
         $order = if ($i % 2 -eq 1) { $sides } else { @($sides)[($sides.Count - 1)..0] }
         foreach ($side in $order) {
-            Reset-Work $e @($side)
-            $l = Get-SideLaunch $e $side $Model
+            # A/A 시험에서는 B 열도 A 설정 폴더·작업 폴더로 실행한다(순서대로 돌므로 작업 폴더를 같이 써도 됨).
+            $launchSide = if ($Mode -eq 'AA') { 'A' } else { $side }
+            Reset-Work $e @($launchSide)
+            $l = Get-SideLaunch $e $launchSide $Model
             # stream-json: 최종 결과 말고도 로드 목록(init)과 도구·스킬 호출을 남긴다(--verbose 필수).
             $cliArgs = @('-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', $PermissionMode) + $l.CliArgs
             if ($MaxBudgetUsd -gt 0) { $cliArgs += @('--max-budget-usd', $MaxBudgetUsd) }
@@ -190,7 +204,7 @@ foreach ($s in $streams) {
 $cond.loaded = $loaded
 $cond.targets = $targets
 Write-Utf8NoBom (Join-Path $outDir 'conditions.json') ($cond | ConvertTo-Json -Depth 6)
-if ($loaded.B -and $targets -and -not ($targets.plugins.Count + $targets.skills.Count + $targets.agents.Count + $targets.mcp.Count)) {
+if ($Mode -eq 'AB' -and $loaded.B -and $targets -and -not ($targets.plugins.Count + $targets.skills.Count + $targets.agents.Count + $targets.mcp.Count)) {
     Write-Warning 'B에서만 로드된 비교 대상이 없습니다. B 구성이 실제로 로드되는지 확인하세요(conditions.json 의 loaded).'
 }
 

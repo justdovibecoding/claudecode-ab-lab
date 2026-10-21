@@ -108,6 +108,7 @@
 | `-PermissionMode <모드>` | `acceptEdits` | `acceptEdits`, `auto`, `plan`, `dontAsk`, `bypassPermissions` |
 | `-MaxBudgetUsd <금액>` | 0(제한 없음) | 실행 한 번당 `--max-budget-usd` |
 | `-Side A\|B\|Both` | `Both` | 한쪽만 측정할 때 |
+| `-Mode AB\|AA` | `AB` | `AA`: B 열도 기본 환경으로 실행하는 A/A 잡음 시험(`-Side Both`만, 결과 폴더 끝에 `-AA`) |
 
 - PowerShell 5.1의 파이프 인코딩을 UTF-8로 바꿔 한국어 지시문을 전달하고, 끝나면 되돌립니다.
 - 지시문 옆에 `<이름>.A.md` / `<이름>.B.md`가 있으면 그쪽에는 변형을 보내고 `conditions.json`의 `promptOverride`에 기록합니다.
@@ -125,6 +126,8 @@
 `results\*\summary.csv`와 `conditions.json`, `judgments.json`을 모아 `REPORT.md`를 씁니다(덮어씀).
 측정마다 B 구성 기록(버전·커밋), 지시문 변형, A/B 동등성 경고, 확인 명령을 적고, 표에 "확인 통과"와 "사람 판정(통과·부분/판정)" 열을 둡니다.
 `stream-json`으로 측정한 결과에는 "스킬·도구 사용" 표(대상 호출 회차, 첫 요청 컨텍스트 차이, 호출 내역)가 붙습니다.
+맨 위에는 과제별·전체 **판정 카드**(채택/조건부 채택/보류/비채택, 근거, 주의)를 두고 `decision.json`으로도 저장합니다.
+측정마다 분포(최소–최대·표준편차)와, 같은 지시문의 A/A 측정이 있으면 잡음 크기를 적습니다. 규칙은 [usage.md 7절](usage.md#7-보고서).
 
 ## b-config.ps1
 

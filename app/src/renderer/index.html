@@ -227,10 +227,14 @@
         <label>쪽
           <select id="hl-side"><option value="Both">A·B</option><option value="A">A만</option><option value="B">B만</option></select>
         </label>
+        <label title="A/A 시험: B 열도 기본 환경으로 실행해 우연 변동(잡음)의 크기를 잽니다. 보고서 판정의 기준이 됩니다.">종류
+          <select id="hl-mode"><option value="AB">A/B 비교</option><option value="AA">A/A 잡음 시험</option></select>
+        </label>
         <button type="button" id="btn-hl-run" class="primary">측정 시작</button>
         <button type="button" id="btn-hl-cancel">취소</button>
       </div>
-      <p class="hint">지시문 옆에 <code>이름.A.md</code> / <code>이름.B.md</code> 가 있으면 그쪽에는 변형을 보내고 결과에 표시합니다.</p>
+      <p class="hint">지시문 옆에 <code>이름.A.md</code> / <code>이름.B.md</code> 가 있으면 그쪽에는 변형을 보내고 결과에 표시합니다.
+        A/A 잡음 시험은 같은 지시문으로 한 번 해 두면 보고서가 그보다 작은 차이를 "우연일 수 있음"으로 봅니다.</p>
       <div class="toolbar wrap">
         <label>확인 명령 <input id="hl-check" type="text" size="42" placeholder="예: npm test · 비우면 확인 안 함"></label>
         <label>제한(초) <input id="hl-check-timeout" type="number" min="10" max="7200" value="600"></label>

@@ -599,7 +599,9 @@ function bind() {
       Runs: Number($('#hl-runs').value) || 3,
       PermissionMode: $('#hl-perm').value,
       Side: $('#hl-side').value,
+      Mode: $('#hl-mode').value,
     };
+    if (params.Mode === 'AA' && params.Side !== 'Both') return toast('A/A 잡음 시험은 쪽을 "A·B"로 두세요.', true);
     const budget = Number($('#hl-budget').value);
     if (budget > 0) params.MaxBudgetUsd = budget;
     if (!params.Prompt) return toast('지시문을 고르세요.', true);

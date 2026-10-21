@@ -23,6 +23,10 @@ $meta = [ordered]@{
     createdAt = (Get-Date -Format 'yyyy-MM-dd')
     # 품질 확인 명령: 반복 측정의 매 실행 뒤 작업 폴더에서 실행, 종료 코드 0이면 통과(예: "npm test")
     check = [ordered]@{ command = ''; timeoutSec = 600 }
+    # 판정 카드 기준(보고서). 측정 전에 정해 두고, 결과를 본 뒤에는 바꾸지 않는다.
+    #   품질 차이가 ±minQualityGainPct %p 를 넘어야 향상/하락, 비용·시간 증가는 max…Pct % 까지 허용,
+    #   비교 대상이 B 실행의 minTargetRunPct % 이상에서 호출돼야 판정한다.
+    decision = [ordered]@{ minQualityGainPct = 10; maxCostIncreasePct = 30; maxTimeIncreasePct = 50; minTargetRunPct = 50 }
 }
 Write-Utf8NoBom (Join-Path $dir 'experiment.json') ($meta | ConvertTo-Json)
 

@@ -21,7 +21,8 @@ Claude Code의 **스킬·플러그인을 넣은 환경(B)**과 **기본 환경(A
 - **나란히 실행**: Windows Terminal을 좌우로 나눠 왼쪽 A, 오른쪽 B를 동시에 띄웁니다(녹화용).
 - **반복 측정**: 같은 지시문을 A/B에서 번갈아 N회 실행하고 비용·턴·시간·토큰·변경 파일 수를 모읍니다.
   비교 대상이 **실제로 로드·호출됐는지**(스킬·에이전트·MCP 호출 횟수)와 **상시 컨텍스트 비용**(첫 요청 토큰)도 기록합니다.
-- **보고서**: 측정 결과를 `REPORT.md` 비교표로 정리합니다.
+- **보고서·판정 카드**: 측정 결과를 `REPORT.md` 비교표로 정리하고, 맨 위에 **채택 / 조건부 채택 / 보류 / 비채택** 판정 카드를
+  둡니다. 판정 기준은 실험마다 측정 전에 정하고, A/A 잡음 시험(`-Mode AA`)으로 우연 변동보다 큰 차이만 의미 있게 봅니다.
 - **점검**: 녹화·측정 전에 환경이 깨끗한지 `doctor.ps1`로 확인합니다.
 
 ## 요구 사항
@@ -72,8 +73,9 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 .\open-both.ps1 -Exp superpowers
 
 # 7-b) 반복 측정 + 보고서 (근거용)
-.\run-headless.ps1 -Exp superpowers -Prompt 01-task -Runs 3
-.\report.ps1 -Exp superpowers
+.\run-headless.ps1 -Exp superpowers -Prompt 01-task -Runs 3 -Mode AA   # 잡음 크기(과제마다 한 번)
+.\run-headless.ps1 -Exp superpowers -Prompt 01-task -Runs 5
+.\report.ps1 -Exp superpowers                                         # REPORT.md + 판정 카드(decision.json)
 ```
 
 ## A와 B의 정의
@@ -122,7 +124,8 @@ claudecode-ab-lab\
       ├─ experiment.json   설명·모델·만든 날·품질 확인 명령(check)
       ├─ b-manifest.json   B 구성 기록(종류·이름·버전·출처·커밋)
       ├─ NOTES.md          B 구성·관찰·결론 기록
-      ├─ REPORT.md         report.ps1 결과
+      ├─ REPORT.md         report.ps1 결과(맨 위 판정 카드)
+      ├─ decision.json     판정 카드 자료(그래프·설명란용)
       ├─ fixture\          실습 원본 프로젝트
       ├─ plugins\          B 전용 --plugin-dir 플러그인
       ├─ skills\           B 전용 스킬 원본
@@ -179,4 +182,5 @@ claudecode-ab-lab\
 | Git 추가의 옵션 주입·경로 탈출 차단, 스크립트의 claude 실행 파일 통일(`CC_AB_CLAUDE`) | 확인 |
 | `stream-json` 형식(init 로드 목록, `Skill` 호출, 훅 문맥, 첫 요청 사용량) | 실제 claude(Haiku)로 형식 확인 |
 | 반복 측정의 로드 확인·대상 호출·첫 요청 컨텍스트 → `conditions.json`·`summary.csv`·보고서 | 가짜 claude 로 확인 |
+| A/A 잡음 시험, 분포(최소–최대·표준편차), 판정 카드(확인 명령·사람 판정·성공률 품질, 잡음 문턱, 대상 호출 보류, 주의 표시) → `REPORT.md`·`decision.json` | 가짜 claude 로 확인 |
 | 앱 녹화(앱 화면만, 자동 시작) → webm → ffmpeg mp4(30fps), 챕터·표시·자동/직접 캡처·`.cast`, 계정 정보 가리기(조각 경계 포함) | 가짜 claude 와 앱으로 확인. **실제 Claude Code 화면의 가리기·멈춤 표시는 미확인** |
