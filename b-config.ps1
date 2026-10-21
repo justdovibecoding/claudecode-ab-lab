@@ -239,8 +239,8 @@ switch ($Action) {
     }
     'equivalence' {
         $eq = Get-Equivalence $e
-        if ($Json) { Out-Result ([ordered]@{ ok = $eq.Ok; issues = @($eq.Issues); details = $eq.Details }) }
-        elseif ($eq.Ok) { Write-Host 'A/B 동등성: 통과 (계정·계정 스킬·설정이 같음)' }
+        if ($Json) { Out-Result ([ordered]@{ ok = $eq.Ok; issues = @($eq.Issues); notes = @($eq.Notes); details = $eq.Details }) }
+        elseif ($eq.Ok) { Write-Host 'A/B 동등성: 통과 (계정·계정 스킬·설정이 같음)'; $eq.Notes | ForEach-Object { Write-Host "  (안내) $_" } }
         else { Write-Host 'A/B 동등성: 확인 필요'; $eq.Issues | ForEach-Object { Write-Host "  - $_" } }
     }
 }

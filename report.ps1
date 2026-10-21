@@ -336,10 +336,13 @@ function Get-SpreadSection($Run) {
 
 foreach ($run in $runs) {
     $cond = $run.Cond
-    $lines += if ($run.Mode -eq 'AA') { "## $($run.Name) (A/A 잡음 측정)" } else { "## $($run.Name)" }
+    $lines += switch ($run.Mode) { 'AA' { "## $($run.Name) (A/A 잡음 측정)" } 'live' { "## $($run.Name) (대화형 1회 · 참고용)" } default { "## $($run.Name)" } }
     $lines += ''
     if ($run.Mode -eq 'AA') {
         $lines += '- **A/A 시험**: B 열도 기본 환경(A 설정 폴더)으로 실행했다. 두 열의 차이는 우연 변동(잡음)의 크기이며, 같은 지시문의 A/B 판정에 기준으로 쓴다.'
+    }
+    if ($run.Mode -eq 'live') {
+        $lines += "- **대화형 세션**(``sessions\$($cond.session)``): 사람이 중간에 개입할 수 있는 1회 기록이라 판정 카드에는 넣지 않는다. 시간은 API·도구 실행 시간의 합(사람이 생각한 시간 제외). 앱 입력창 전송 $($cond.sends)회"
     }
     $lines += "- 지시문: ``$($cond.prompt)`` / 모델: ``$($cond.model)`` / 권한 모드: ``$($cond.permissionMode)`` / Claude Code: $($cond.claudeVersion)"
     if ($run.Mode -ne 'AA') {

@@ -85,9 +85,15 @@ if ($Mode -eq 'AA') {
     Write-Host 'A/B 동등성 점검 중...'
     $eq = Get-Equivalence $e
 }
-$cond.equivalence = [ordered]@{ ok = $eq.Ok; issues = @($eq.Issues) }
+$cond.equivalence = [ordered]@{ ok = $eq.Ok; issues = @($eq.Issues); notes = @($eq.Notes) }
 if (-not $eq.Ok) { foreach ($issue in $eq.Issues) { Write-Warning "A/B 동등성: $issue" } }
 Write-Utf8NoBom (Join-Path $outDir 'conditions.json') ($cond | ConvertTo-Json -Depth 6)
+
+# 작업 폴더를 초기화하기 전에, 앱에서 "종료" 없이 닫은 대화형 세션의 결과물이 있으면 먼저 남긴다.
+try {
+    $saved = Save-PendingLiveSession $e
+    if ($saved) { Write-Host "대화형 세션 결과를 먼저 남김: $($saved.dir)" }
+} catch { Write-Warning "대화형 세션 결과를 남기지 못함: $($_.Exception.Message)" }
 
 # 품질 확인 명령(experiment.json 의 check.command). 매 실행 뒤 작업 폴더에서 실행한다.
 $checkCmd = if ($e.Meta.check -and $e.Meta.check.command) { "$($e.Meta.check.command)" } else { '' }

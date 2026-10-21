@@ -143,6 +143,7 @@ if ($Exp) {
     $eq = Get-Equivalence $e
     if ($eq.Ok) { Write-Check OK "같은 계정, 계정 스킬 $($eq.Details.syncedSkills.A)개 동일, settings.json·설정 폴더 추가 파일·작업 폴더별 권한 동일" }
     else { foreach ($issue in $eq.Issues) { Write-Check 주의 $issue } }
+    foreach ($note in @($eq.Notes)) { Write-Check 정보 $note }
 }
 
 Write-Host ''

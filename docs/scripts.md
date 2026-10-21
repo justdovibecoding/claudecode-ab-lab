@@ -116,6 +116,17 @@
 - `experiment.json`의 `check.command`가 있으면 매 실행 뒤 작업 폴더에서 실행해 `CheckPassed`와 `<쪽>-<회차>-check.txt`로 기록합니다.
 - `--output-format stream-json --verbose`로 실행해 실제 로드 목록과 스킬·에이전트·MCP 호출, 첫 요청 컨텍스트를 기록합니다(`*-stream.jsonl`, `*-tools.json`, `conditions.json`의 `loaded`·`targets`).
 - 결과 파일 목록은 [usage.md 6절](usage.md#6-반복-측정-근거용)을 보세요.
+- 작업 폴더를 초기화하기 전에, 앱에서 "종료" 없이 닫은 대화형 세션이 있으면 그 결과를 먼저 남깁니다(`save-live.ps1 -Pending`과 같음).
+
+## save-live.ps1
+
+```powershell
+.\save-live.ps1 -Exp superpowers -Session 20261021-201011   # 그 세션의 결과를 results\<세션>-live\ 로
+.\save-live.ps1 -Exp superpowers -Pending                   # 마지막 세션을 아직 남기지 않았으면 남김
+```
+
+대화형 세션의 결과(작업 폴더 사본, 변경 목록, 확인 명령, 비용·토큰·턴, 마지막 응답)를 반복 측정과 같은 형식으로 남깁니다.
+앱이 세션 종료 때 부르므로 보통 직접 쓸 일은 없습니다. 자세한 내용은 [app.md 5절](app.md#5-기록experiments이름sessions시각)을 보세요.
 
 ## report.ps1
 

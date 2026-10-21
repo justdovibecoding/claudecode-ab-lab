@@ -110,6 +110,7 @@ claudecode-ab-lab\
 ├─ reset.ps1          작업 폴더를 실습 원본 상태로 되돌리기
 ├─ run-headless.ps1   A/B 반복 측정
 ├─ report.ps1         측정 결과 → REPORT.md
+├─ save-live.ps1      대화형 세션 결과 → results\<세션>-live (앱이 종료 때 부름)
 ├─ b-config.ps1       B 구성: 설치·제거·로컬/Git 추가·토큰·동등성 점검
 ├─ app.ps1            GUI 앱 실행(처음이면 의존성 설치)
 ├─ app\               Electron 앱 소스(docs\app.md)

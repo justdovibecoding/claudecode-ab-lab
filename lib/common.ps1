@@ -298,9 +298,10 @@ function Get-SyncedSkills([string]$ConfigDir) {
 
 # A/B 설정 폴더가 비교 대상 말고는 같은지 본다.
 #   계정(로그인), claude.ai 계정 스킬 목록, settings.json(enabledPlugins, theme 제외)
-# 결과: @{ Ok; Issues(문장 목록); Details }
+# 결과: @{ Ok; Issues(문장 목록); Notes(안내, Ok 에 영향 없음); Details }
 function Get-Equivalence($Exp) {
     $issues = @()
+    $notes = @()   # 문제는 아니지만 알아 둘 것(Ok 에 영향 없음)
     $details = [ordered]@{}
 
     $authA = Get-AuthStatus $VanillaConfig
@@ -319,8 +320,23 @@ function Get-Equivalence($Exp) {
     $onlyA = @($skillsA | Where-Object { $_ -notin $skillsB })
     $onlyB = @($skillsB | Where-Object { $_ -notin $skillsA })
     $details.syncedSkills = [ordered]@{ A = $skillsA.Count; B = $skillsB.Count; onlyA = $onlyA; onlyB = $onlyB }
+    # 계정 스킬은 그 설정 폴더로 Claude Code 를 처음 실행할 때 받는다. 한쪽이 아직 한 번도 받지 않았으면
+    # (로그인 전이거나 실행 전) 문제가 아니라 순서의 문제이므로 경고 대신 안내로 둔다. 측정 뒤에는
+    # 실제 로드 목록(init)으로 다시 판단한다(Resolve-EquivalenceWithInit).
+    $neverA = -not (Test-Path (Join-Path $VanillaConfig 'skills\synced'))
+    $neverB = -not (Test-Path (Join-Path $Exp.ConfigB 'skills\synced'))
+    $short = { param($names) if ($names.Count -gt 3) { "$(($names | Select-Object -First 3) -join ', ') 외 $($names.Count - 3)개" } else { $names -join ', ' } }
     if ($onlyA.Count -or $onlyB.Count) {
-        $issues += "계정 스킬 목록이 다름(A에만: $($onlyA -join ', ') / B에만: $($onlyB -join ', ')). 양쪽을 한 번씩 실행해 동기화하거나 점검을 다시 하세요"
+        if ($neverB -and -not $onlyB.Count) {
+            $notes += "B 계정 스킬을 아직 받지 않음(A는 $($skillsA.Count)개). B를 한 번 실행하면 받아지며, 측정 결과는 실제 로드 목록으로 다시 확인합니다"
+        } elseif ($neverA -and -not $onlyA.Count) {
+            $notes += "A 계정 스킬을 아직 받지 않음(B는 $($skillsB.Count)개). A를 한 번 실행하면 받아집니다"
+        } else {
+            $parts = @()
+            if ($onlyA.Count) { $parts += "A에만 $($onlyA.Count)개: $(& $short $onlyA)" }
+            if ($onlyB.Count) { $parts += "B에만 $($onlyB.Count)개: $(& $short $onlyB)" }
+            $issues += "계정 스킬 목록이 다름($($parts -join ' / ')). 양쪽을 한 번씩 실행해 동기화한 뒤 다시 점검하세요"
+        }
     }
 
     $read = {
@@ -378,7 +394,7 @@ function Get-Equivalence($Exp) {
         B = Get-ProjectMemoryCount $Exp.ConfigB (Get-WorkDir $Exp 'B')
     }
 
-    [pscustomobject]@{ Ok = ($issues.Count -eq 0); Issues = $issues; Details = $details }
+    [pscustomobject]@{ Ok = ($issues.Count -eq 0); Issues = $issues; Notes = $notes; Details = $details }
 }
 
 # ---------- stream-json 해석(스킬·도구 사용 기록) ----------
@@ -531,4 +547,187 @@ function Invoke-CheckCommand([string]$WorkDir, [string]$Command, [int]$TimeoutSe
     } finally {
         Remove-Item $out, $err -ErrorAction SilentlyContinue
     }
+}
+
+# ---------- 대화형 세션 결과 ----------
+# 대화형 세션(앱의 "대화형 비교")의 결과를 반복 측정과 같은 형식으로 results\<세션>-live\ 에 남긴다.
+# 비용·토큰은 Claude Code 가 설정 폴더에 남기는 대화 기록(projects\<작업 폴더>\<대화>.jsonl)의 cost-state 에서
+# 읽으므로 토큰이 더 들지 않는다. 세션 동안 시작된 대화 기록만 더한다(한쪽을 다시 시작하면 기록이 여러 개).
+
+function ConvertTo-UtcTime($Value) {
+    if ($Value -is [datetime]) { return $Value.ToUniversalTime() }
+    [datetime]::Parse("$Value", [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::AdjustToUniversal)
+}
+
+function Read-LiveTranscripts([string]$ConfigDir, [string]$WorkDir, [datetime]$StartUtc, [datetime]$EndUtc) {
+    $epoch = [datetime]::new(1970, 1, 1, 0, 0, 0, [DateTimeKind]::Utc)
+    $fromMs = ($StartUtc - $epoch).TotalMilliseconds - 60000
+    $toMs = ($EndUtc - $epoch).TotalMilliseconds + 60000
+    $dir = Join-Path $ConfigDir "projects\$(Get-ProjectSlug $WorkDir)"
+    $r = [ordered]@{
+        Files = @(); Cost = 0.0; ApiMs = 0; ToolMs = 0
+        InputTokens = 0; OutputTokens = 0; CacheReadTokens = 0; CacheCreationTokens = 0
+        Turns = 0; Prompts = 0; LastText = ''; Stream = $null
+    }
+    $assistant = @()
+    if (Test-Path $dir) {
+        $files = Get-ChildItem $dir -Filter *.jsonl -File | Where-Object { $_.LastWriteTimeUtc -ge $StartUtc.AddMinutes(-1) } | Sort-Object LastWriteTimeUtc
+        foreach ($f in $files) {
+            $lines = [IO.File]::ReadAllLines($f.FullName, [Text.Encoding]::UTF8)
+            $state = $null
+            foreach ($l in $lines) { if ($l.StartsWith('{"type":"cost-state"')) { try { $state = $l | ConvertFrom-Json } catch { } } }
+            # 이 세션 동안 시작된 대화만(이전 대화를 이어 쓴 기록·반복 측정 기록은 뺀다)
+            if (-not $state -or [double]$state.startTime -lt $fromMs -or [double]$state.startTime -gt $toMs) { continue }
+            $r.Files += $f.Name
+            $r.Cost += [double]$state.totalCostUSD
+            $r.ApiMs += [double]$state.totalAPIDuration
+            $r.ToolMs += [double]$state.totalToolDuration
+            foreach ($m in @($state.modelUsage.PSObject.Properties)) {
+                $u = $m.Value
+                $r.InputTokens += [long]$u.inputTokens; $r.OutputTokens += [long]$u.outputTokens
+                $r.CacheReadTokens += [long]$u.cacheReadInputTokens; $r.CacheCreationTokens += [long]$u.cacheCreationInputTokens
+            }
+            $assistant += @($lines | Where-Object { $_.Contains('"type":"assistant"') })
+            # 사람이 입력한 지시(문자열 content, 명령 출력·메타 제외)
+            $r.Prompts += @($lines | Where-Object { $_.Contains('"type":"user"') -and $_.Contains('"content":"') -and -not $_.Contains('"isMeta":true') }).Count
+        }
+    }
+    # 응답 하나가 내용 블록마다 줄로 나뉘어 저장되므로 message.id 로 묶는다.
+    $texts = [ordered]@{}
+    foreach ($l in $assistant) {
+        try { $j = $l | ConvertFrom-Json } catch { continue }
+        if ($j.isSidechain) { continue }
+        $id = "$($j.message.id)"
+        if (-not $texts.Contains($id)) { $texts[$id] = '' }
+        foreach ($c in @($j.message.content)) { if ($c.type -eq 'text' -and $c.text) { $texts[$id] += $c.text } }
+    }
+    $r.Turns = $texts.Count
+    $last = @($texts.Values | Where-Object { $_ }) | Select-Object -Last 1
+    $r.LastText = if ($last) { "$last" } else { '' }
+    $r.Stream = Read-ClaudeStream $assistant
+    [pscustomobject]$r
+}
+
+function Save-LiveSession($Exp, [string]$Session) {
+    if ($Session -notmatch '^\d{8}-\d{6}$') { throw "잘못된 세션 이름: $Session" }
+    $sdir = Join-Path $Exp.Dir "sessions\$Session"
+    $metaFile = Join-Path $sdir 'session.json'
+    if (-not (Test-Path $metaFile)) { throw "세션 기록이 없습니다: $sdir" }
+    $meta = Get-Content $metaFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    $startUtc = ConvertTo-UtcTime $meta.startedAt
+    $endUtc = if ($meta.endedAt) { ConvertTo-UtcTime $meta.endedAt } else { [datetime]::UtcNow }
+
+    # 앱 입력창으로 보낸 지시문(turns.jsonl). 터미널에 직접 친 것은 대화 기록에만 있다.
+    $sends = @()
+    $turnsFile = Join-Path $sdir 'turns.jsonl'
+    if (Test-Path $turnsFile) {
+        $sends = @(Get-Content $turnsFile -Encoding UTF8 | ForEach-Object { try { $_ | ConvertFrom-Json } catch { } } | Where-Object { $_.event -eq 'send' })
+    }
+    $promptName = @($sends | Where-Object { $_.promptName } | ForEach-Object { "$($_.promptName)" }) | Select-Object -First 1
+    if (-not $promptName) { $promptName = 'live' }
+
+    # 양쪽 모두 대화가 없으면(세션만 열었다 닫음) 남길 것이 없다. 다시 묻지 않게 표시만 해 둔다.
+    $trans = @{}
+    foreach ($side in 'A', 'B') {
+        $l = $meta.launches.$side
+        if ($l) { $trans[$side] = Read-LiveTranscripts "$($l.config)" "$($l.work)" $startUtc $endUtc }
+    }
+    if (-not @($trans.Values | Where-Object { $_.Files.Count }).Count) {
+        Write-Utf8NoBom (Join-Path $sdir 'result.txt') "(대화 없음 - 남기지 않음)`n"
+        return $null
+    }
+
+    $runName = "$Session-live"
+    $outDir = Join-Path $Exp.Dir "results\$runName"
+    New-Item -ItemType Directory -Force $outDir | Out-Null
+    $fixture = Join-Path $Exp.Dir 'fixture'
+    $checkCmd = if ($Exp.Meta.check -and $Exp.Meta.check.command) { "$($Exp.Meta.check.command)" } else { '' }
+    $checkTimeout = if ($Exp.Meta.check -and $Exp.Meta.check.timeoutSec) { [int]$Exp.Meta.check.timeoutSec } else { 600 }
+    $manifest = @(Get-BManifest $Exp)
+    $targets = Get-StreamTargets $null $null $manifest
+
+    $rows = @()
+    foreach ($side in 'A', 'B') {
+        $l = $meta.launches.$side
+        if (-not $l) { continue }
+        $t = $trans[$side]
+        $base = Join-Path $outDir "$side-1"
+
+        $changes = @()
+        if (Test-Path $l.work) {
+            Invoke-Mirror "$($l.work)" "$base-work"
+            $changes = Compare-Tree $fixture "$($l.work)"
+        }
+        Write-Utf8NoBom "$base-changes.txt" (($changes -join "`n") + "`n")
+
+        $checkPassed = $null
+        if ($checkCmd -and (Test-Path $l.work)) {
+            $env:AB_PROMPT = $promptName
+            $ck = Invoke-CheckCommand "$($l.work)" $checkCmd $checkTimeout
+            $checkPassed = $ck.Passed
+            $status = if ($ck.TimedOut) { "시간 초과($checkTimeout 초)" } else { "종료 코드 $($ck.ExitCode)" }
+            Write-Utf8NoBom "$base-check.txt" ("명령: $checkCmd`n결과: $(if ($ck.Passed) { '통과' } else { '실패' }) · $status · $($ck.Seconds)초`n`n$($ck.Output)")
+        }
+
+        $none = -not $t.Files.Count
+        $seconds = [math]::Round(($t.ApiMs + $t.ToolMs) / 1000, 1)
+        if ($t.LastText) { Write-Utf8NoBom "$base-result.md" $t.LastText }
+        # A-1.json: 반복 측정의 result 이벤트와 같은 모양(판정 화면·보고서가 읽는다)
+        $res = [ordered]@{
+            type = 'result'; subtype = $(if ($none) { 'no_conversation' } else { 'live' }); is_error = $none
+            total_cost_usd = $t.Cost; num_turns = $t.Turns; duration_ms = [math]::Round($t.ApiMs + $t.ToolMs)
+            usage = [ordered]@{ input_tokens = $t.InputTokens; output_tokens = $t.OutputTokens; cache_read_input_tokens = $t.CacheReadTokens; cache_creation_input_tokens = $t.CacheCreationTokens }
+            transcripts = @($t.Files); prompts = $t.Prompts; result = $t.LastText
+        }
+        Write-Utf8NoBom "$base.json" ($res | ConvertTo-Json -Depth 6)
+        $calls = @($t.Stream.Calls)
+        $hits = @($calls | Where-Object { Test-TargetCall $_ $targets })
+        Write-Utf8NoBom "$base-tools.json" ([ordered]@{
+                firstContextTokens = $t.Stream.FirstContext
+                calls = @($calls | ForEach-Object { [ordered]@{ tool = $_.Tool; kind = $_.Kind; name = $_.Name; target = [bool](Test-TargetCall $_ $targets) } })
+            } | ConvertTo-Json -Depth 6)
+
+        $rows += [pscustomobject][ordered]@{
+            Side = $side; Run = 1; Exit = 0; IsError = $none; Subtype = $res.subtype
+            CostUSD = $(if ($none) { $null } else { $t.Cost }); Turns = $t.Turns; Seconds = $seconds
+            InputTokens = $t.InputTokens; OutputTokens = $t.OutputTokens; CacheReadTokens = $t.CacheReadTokens; CacheCreationTokens = $t.CacheCreationTokens
+            FirstContextTokens = $t.Stream.FirstContext
+            ChangedFiles = $changes.Count; CheckPassed = $checkPassed
+            ToolCalls = $calls.Count; SkillCalls = @($calls | Where-Object Kind -eq 'skill').Count
+            TargetCalls = $(if ($side -eq 'B') { $hits.Count } else { 0 }); Skills = Format-CallCounts @($calls | Where-Object Kind -in 'skill', 'agent')
+            HookContextChars = $null; SessionId = (@($t.Files) -join ' ')
+        }
+    }
+
+    $cond = [ordered]@{
+        experiment = $Exp.Name; mode = 'live'; prompt = $promptName; session = $Session
+        note = '대화형 세션 1회(사람이 중간에 개입할 수 있음). 참고용이며 보고서 판정 카드에는 넣지 않는다. 시간은 API+도구 실행 시간 합(사람이 생각한 시간 제외).'
+        sides = @('A', 'B'); runs = 1
+        model = "$($meta.launches.A.model)"; permissionMode = $(if ($meta.permissionMode) { "$($meta.permissionMode)" } else { '기본(확인 창에 사람이 답함)' })
+        plugins = @(Get-PluginDirs $Exp | ForEach-Object Name); skills = @(Get-SkillDirs $Exp | ForEach-Object Name)
+        installedB = Test-Path (Join-Path $Exp.ConfigB 'plugins\installed_plugins.json')
+        mcpB = @(if (Test-Path (Join-Path $Exp.Dir 'mcp-B.json')) { try { (Get-Content (Join-Path $Exp.Dir 'mcp-B.json') -Raw | ConvertFrom-Json).mcpServers.PSObject.Properties | ForEach-Object Name } catch { } })
+        reset = $meta.reset; sends = $sends.Count
+        promptOverride = @(@('A', 'B') | Where-Object { $s = $_; @($sends | Where-Object { $_."extra$s" }).Count })
+        claudeVersion = "$($meta.claudeVersion)"; claudePath = "$($meta.claudeExe)"
+        startedAt = "$($meta.startedAt)"; endedAt = "$($meta.endedAt)"
+        bManifest = $manifest; check = $Exp.Meta.check; decision = $Exp.Meta.decision
+        targets = $targets
+    }
+    Write-Utf8NoBom (Join-Path $outDir 'conditions.json') ($cond | ConvertTo-Json -Depth 6)
+    $rows | Export-Csv (Join-Path $outDir 'summary.csv') -NoTypeInformation -Encoding UTF8
+    Write-Utf8NoBom (Join-Path $sdir 'result.txt') "$runName`n"
+    [pscustomobject]@{ run = $runName; dir = $outDir; rows = $rows }
+}
+
+# 마지막 대화형 세션의 결과를 아직 남기지 않았으면 남긴다. 작업 폴더를 초기화하기 전에 부른다
+# (세션을 "종료" 없이 닫은 경우에도 결과물이 지워지지 않게). 이 기능 전에 만든 세션(autoSave 없음)은 건너뛴다.
+function Save-PendingLiveSession($Exp) {
+    $root = Join-Path $Exp.Dir 'sessions'
+    if (-not (Test-Path $root)) { return $null }
+    $latest = Get-ChildItem $root -Directory | Where-Object Name -match '^\d{8}-\d{6}$' | Sort-Object Name | Select-Object -Last 1
+    if (-not $latest -or (Test-Path (Join-Path $latest.FullName 'result.txt'))) { return $null }
+    try { $meta = Get-Content (Join-Path $latest.FullName 'session.json') -Raw -Encoding UTF8 | ConvertFrom-Json } catch { return $null }
+    if (-not $meta.autoSave) { return $null }
+    Save-LiveSession $Exp $latest.Name
 }
