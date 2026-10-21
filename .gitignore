@@ -1,0 +1,12 @@
+# 로그인 토큰(.credentials.json)이 들어 있으므로 절대 올리지 않는다.
+config-vanilla/
+experiments/*/config-B/
+
+# 이 PC 전용 설정(작업 폴더 위치 등)
+lab.local.json
+
+# 실행 결과(용량이 크고 PC마다 다름). 남기려면 이 줄을 지우고 필요한 것만 올린다.
+experiments/*/results/
+
+# 작업 폴더는 기본적으로 저장소 밖(workRoot)에 만들지만, 혹시 안에 생긴 경우 대비
+experiments/*/work-*/
