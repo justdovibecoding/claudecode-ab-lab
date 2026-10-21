@@ -2,7 +2,8 @@
 const fs = require('fs');
 const path = require('path');
 
-const NAME_RE = /^[A-Za-z0-9._-]+$/;
+// 영문·숫자·._- 만, 단 "." ".." 처럼 점으로만 된 이름은 상위 폴더를 가리키므로 거부한다.
+const NAME_RE = /^(?!\.+$)[A-Za-z0-9._-]+$/;
 const VARIANT_RE = /\.(A|B)\.md$/i;
 
 function resolveLabRoot(env, appDir) {
@@ -77,6 +78,10 @@ function listExperiments(labRoot) {
         name,
         description: meta.description || '',
         model: meta.model || '',
+        check: {
+          command: (meta.check && meta.check.command) || '',
+          timeoutSec: (meta.check && meta.check.timeoutSec) || 600,
+        },
         plugins: subdirs(path.join(dir, 'plugins')),
         skills: subdirs(path.join(dir, 'skills')),
         installed: fs.existsSync(path.join(dir, 'config-B', 'plugins', 'installed_plugins.json')),
@@ -113,6 +118,93 @@ function createSession(expDir, meta) {
   };
 }
 
+// 품질 확인 명령(experiment.json 의 check). 다른 항목은 그대로 둔다.
+function updateExperimentCheck(expDir, check) {
+  const file = path.join(expDir, 'experiment.json');
+  const meta = readJson(file);
+  const command = String((check && check.command) || '').trim();
+  if (command.length > 500) throw new Error('확인 명령이 너무 깁니다(500자 이하).');
+  const timeoutSec = Math.round(Number(check && check.timeoutSec) || 600);
+  if (timeoutSec < 10 || timeoutSec > 7200) throw new Error('제한 시간은 10–7200초 사이여야 합니다.');
+  meta.check = { command, timeoutSec };
+  fs.writeFileSync(file, JSON.stringify(meta, null, 2) + '\n');
+  return meta.check;
+}
+
+// ---------- 반복 측정 결과와 블라인드 판정 ----------
+
+const Judge = require('../shared/judge');
+const RESULT_KEY_FILE = /^(A|B)-(\d+)\.json$/;
+
+function readText(file, limit) {
+  if (!fs.existsSync(file)) return null;
+  const text = fs.readFileSync(file, 'utf8').replace(/^﻿/, '');
+  return limit && text.length > limit ? text.slice(0, limit) + '\n…(생략)' : text;
+}
+
+function resultKeys(runDir) {
+  return fs.readdirSync(runDir)
+    .map((f) => RESULT_KEY_FILE.exec(f))
+    .filter(Boolean)
+    .map((m) => `${m[1]}-${m[2]}`)
+    .sort();
+}
+
+function listResultRuns(expDir) {
+  const root = path.join(expDir, 'results');
+  return subdirs(root)
+    .filter((name) => NAME_RE.test(name) && fs.existsSync(path.join(root, name, 'summary.csv')))
+    .sort()
+    .reverse()
+    .map((name) => {
+      const dir = path.join(root, name);
+      let cond = {};
+      try { cond = readJson(path.join(dir, 'conditions.json')); } catch { /* 없음 */ }
+      let judged = 0;
+      try { judged = Object.keys(readJson(path.join(dir, 'judgments.json')).items || {}).length; } catch { /* 없음 */ }
+      return { name, prompt: cond.prompt || '', model: cond.model || '', count: resultKeys(dir).length, judged };
+    });
+}
+
+function runDirOf(expDir, run) {
+  return path.join(expDir, 'results', assertName(run));
+}
+
+// 판정 화면용: 섞인 순서와 답안별 내용(최종 응답, 변경 목록, 확인 결과).
+function readRunItems(expDir, run, random) {
+  const dir = runDirOf(expDir, run);
+  const keys = resultKeys(dir);
+  let saved = {};
+  try { saved = readJson(path.join(dir, 'judgments.json')); } catch { /* 처음 */ }
+  const order = Judge.ensureOrder(saved.blindOrder, keys, random);
+  if (!saved.blindOrder || saved.blindOrder.join() !== order.join()) {
+    fs.writeFileSync(path.join(dir, 'judgments.json'), JSON.stringify({ blindOrder: order, items: saved.items || {} }, null, 2));
+  }
+  const items = order.map((key) => {
+    const check = readText(path.join(dir, `${key}-check.txt`), 4000);
+    const changes = readText(path.join(dir, `${key}-changes.txt`));
+    return {
+      key,
+      result: readText(path.join(dir, `${key}-result.md`), 20000) || '(최종 응답 없음 — JSON 원본을 확인하세요)',
+      changes: changes ? changes.split(/\r?\n/).filter(Boolean) : [],
+      check: check === null ? null : { passed: /^결과: 통과/m.test(check), text: check },
+    };
+  });
+  return { order, items, judgments: saved.items || {} };
+}
+
+function saveJudgments(expDir, run, items) {
+  const dir = runDirOf(expDir, run);
+  const keys = resultKeys(dir);
+  let saved = {};
+  try { saved = readJson(path.join(dir, 'judgments.json')); } catch { /* 처음 */ }
+  const order = Judge.ensureOrder(saved.blindOrder, keys);
+  const clean = Judge.validate(items, keys);
+  fs.writeFileSync(path.join(dir, 'judgments.json'), JSON.stringify({ blindOrder: order, items: clean }, null, 2));
+  return Judge.summarize(clean, keys);
+}
+
 module.exports = {
   NAME_RE, resolveLabRoot, assertName, experimentDir, listExperiments, listPrompts, readPrompt, createSession, stamp,
+  updateExperimentCheck, listResultRuns, readRunItems, saveJudgments,
 };

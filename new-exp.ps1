@@ -2,7 +2,8 @@
 #   .\new-exp.ps1 -Name superpowers -Description "superpowers 플러그인 유무 비교"
 #   .\new-exp.ps1 -Name pdf-skill -FixtureFrom D:\some\project -Model claude-sonnet-5-5
 param(
-    [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9._-]+$')][string]$Name,
+    # 점으로만 된 이름(".", "..")은 상위 폴더를 가리키므로 거부한다.
+    [Parameter(Mandatory)][ValidatePattern('^(?!\.+$)[A-Za-z0-9._-]+$')][string]$Name,
     [string]$Description = '',
     [string]$Model,
     [string]$FixtureFrom
@@ -20,6 +21,8 @@ foreach ($sub in 'fixture', 'plugins', 'skills', 'prompts', 'results', 'config-B
 $meta = [ordered]@{
     name = $Name; description = $Description; model = $Model
     createdAt = (Get-Date -Format 'yyyy-MM-dd')
+    # 품질 확인 명령: 반복 측정의 매 실행 뒤 작업 폴더에서 실행, 종료 코드 0이면 통과(예: "npm test")
+    check = [ordered]@{ command = ''; timeoutSec = 600 }
 }
 Write-Utf8NoBom (Join-Path $dir 'experiment.json') ($meta | ConvertTo-Json)
 

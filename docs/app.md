@@ -43,9 +43,13 @@ A/B 두 Claude Code 화면을 한 창에 나란히 띄우고, **공통 입력 �
 | 화면 | 하는 일 |
 |---|---|
 | 대화형 비교 | A/B Claude Code를 앱 안에서 실행하고 지시문을 보냄 |
+| B 구성 | A/B 동등성 점검, B 구성 목록(버전·커밋·출처, 켜고 끄기·토큰·제거), 공식 목록 검색·설치, 마켓플레이스 추가, 로컬 폴더·Git 추가 |
 | 점검 · 로그인 | `doctor.ps1 -Exp` 실행 결과, A/B 로그인 창 열기, 실험 폴더 열기 |
-| 반복 측정 | `run-headless.ps1` 실행(지시문·회차·권한 모드·예산·쪽), 진행 로그, 취소 |
-| 결과 | `report.ps1` 실행 후 `REPORT.md` 표시 |
+| 반복 측정 | `run-headless.ps1` 실행(지시문·회차·권한 모드·예산·쪽), 확인 명령 편집, 진행 로그, 취소 |
+| 결과 | `report.ps1` 실행 후 `REPORT.md` 표시, 블라인드 판정 |
+
+B 구성을 바꾸면 진행 중인 대화형 세션의 B에는 바로 반영되지 않습니다. B의 "다시 시작"을 누르세요.
+자세한 동작은 [usage.md](usage.md) 3절(B 구성)과 6절(확인 명령·동등성·판정)을 참고하세요.
 
 ## 3. 대화형 비교 순서
 
@@ -119,7 +123,8 @@ app\
 ├─ src\main\env.js         자식 프로세스 환경 변수 정리
 ├─ src\main\claude-resolve.js  claude.exe 위치 찾기
 ├─ src\shared\prompt.js    공통/예비 입력 상태와 공정성 판정
-├─ src\renderer\           화면(index.html, styles.css, app.js)
+├─ src\shared\judge.js     블라인드 순서 섞기, 판정 검사·집계
+├─ src\renderer\           화면(index.html, styles.css, app.js, bconfig.js, judging.js)
 └─ test\logic.test.js      단위 테스트(npm test)
 ```
 
@@ -132,7 +137,9 @@ app\
   `CLAUDE_CONFIG_DIR`은 자식 프로세스에 넘기지 않습니다. `COLORTERM=truecolor`를 양쪽에 똑같이 줍니다.
 - **보안**: 화면은 Node 기능 없이(`contextIsolation`, `sandbox`, `nodeIntegration: false`) 동작하고, 외부 페이지
   이동·새 창을 막습니다. 화면이 부를 수 있는 기능은 `preload.js`의 목록뿐이며, 실행할 수 있는 스크립트도
-  정해 둔 것(doctor, reset, run-headless, report, new-exp, list-exp, start)만입니다. 네트워크 포트를 열지 않습니다.
+  정해 둔 것(doctor, reset, run-headless, report, new-exp, list-exp, b-config, start)만입니다. 실험·측정 이름은
+영문·숫자·`._-`만 받고 `.`·`..`처럼 점으로만 된 이름은 거부해 상위 폴더로 빠져나가지 못하게 합니다.
+네트워크 포트를 열지 않습니다.
 
 ## 8. 환경 변수
 

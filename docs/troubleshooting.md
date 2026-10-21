@@ -75,6 +75,16 @@ Remove-Item env:CLAUDE_CONFIG_DIR
 robocopy 종료 코드 8 이상은 실패입니다. 작업 폴더의 파일이 다른 프로그램(편집기, 실행 중인 Claude Code, 개발 서버)에
 잡혀 있는 경우가 대부분입니다. 해당 프로그램을 닫고 다시 실행하세요.
 
+## B 구성(플러그인 설치)
+
+| 증상 | 원인과 해결 |
+|---|---|
+| `설치 실패: 경로가 너무 깁니다 … Filename too long` | 플러그인을 `config-B\plugins\cache\` 아래로 git 복제하다 Windows 경로 길이(260자)를 넘음. 저장소를 짧은 경로(예: `D:\ab-lab`)로 옮기거나, 관리자 PowerShell에서 `New-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem -Name LongPathsEnabled -Value 1 -PropertyType DWORD -Force` 후 재부팅 |
+| `마켓플레이스가 정한 명령 실행 확인이 필요합니다` | 실행 명령을 동반하는 플러그인. 내용을 직접 확인해야 하므로 B 터미널에서 `/plugin`으로 설치 |
+| 목록에 "기록 없음" | B 터미널의 `/plugin` 등으로 넣어 출처가 기록되지 않음. `NOTES.md`에 출처·버전을 적거나, 제거 후 `b-config.ps1`로 다시 설치 |
+| 동등성 "계정 스킬 목록이 다름" | 한쪽 설정 폴더가 아직 동기화되지 않음. A·B를 한 번씩 대화형으로 실행한 뒤 다시 점검 |
+| 확인 명령이 늘 실패 | 작업 폴더에서 명령을 손으로 실행해 확인. `findstr`는 BOM 붙은 UTF-8 파일에서 글자를 못 찾음 |
+
 ## GUI 앱
 
 | 증상 | 원인과 해결 |

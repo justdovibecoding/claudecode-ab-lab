@@ -10,6 +10,10 @@ Claude Code의 **스킬·플러그인을 넣은 환경(B)**과 **기본 환경(A
 
 - **환경 분리**: `CLAUDE_CONFIG_DIR`로 설정 폴더를 A/B로 나눠, 평소 쓰는 `~/.claude`의 플러그인·스킬·훅·메모리·MCP가 섞이지 않게 합니다.
 - **실험 단위 관리**: 비교 주제마다 `experiments\<이름>\`에 실습 프로젝트, 비교 대상, 지시문, 결과를 모아 둡니다.
+- **B 구성 관리**: 공식 플러그인 목록 검색·설치, 로컬 폴더·Git(커밋 고정) 추가, 켜고 끄기, 예상 토큰 확인.
+  무엇을 어디서 어떤 버전으로 넣었는지 `b-manifest.json`에 기록해 측정 조건과 보고서에 붙입니다(`b-config.ps1`, 앱의 "B 구성").
+- **품질 판정**: 매 측정 뒤 확인 명령(예: `npm test`)을 자동 실행해 통과 여부를 기록하고, 앱에서 A/B를 가린 블라인드 판정을 합니다.
+- **A/B 동등성 점검**: 비교 대상 말고는 같은지(계정·요금제·계정 스킬·설정) 확인해 점검·측정 조건·보고서에 남깁니다.
 - **GUI 앱**: A/B Claude Code 화면을 한 창에 나란히 띄우고, 공통 입력을 쪽별 예비 입력창에 동기화한 뒤
   쪽마다 고쳐서 보냅니다. 지시문 차이는 공정성 배너와 기록으로 공개합니다([docs/app.md](docs/app.md)).
 - **나란히 실행**: Windows Terminal을 좌우로 나눠 왼쪽 A, 오른쪽 B를 동시에 띄웁니다(녹화용).
@@ -45,10 +49,11 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 # 3) 실험 만들기 (기존 프로젝트를 실습 원본으로 복사)
 .\new-exp.ps1 -Name superpowers -Description "superpowers 유무 비교" -FixtureFrom D:\some\project
 
-# 4) B에 비교 대상 넣기 (셋 중 하나, 자세한 방법은 docs\usage.md)
-#    experiments\superpowers\plugins\<플러그인>\      설치 없이 불러오기
-#    experiments\superpowers\skills\<스킬>\SKILL.md   스킬만 비교
-#    B를 열고 /plugin 으로 정식 설치                   설치 과정 촬영용
+# 4) B에 비교 대상 넣기 (앱의 "B 구성" 화면 또는 b-config.ps1, 자세한 방법은 docs\usage.md)
+.\b-config.ps1 -Exp superpowers -Action available                      # 공식 목록
+.\b-config.ps1 -Exp superpowers -Action install -Plugin superpowers@anthropic-plugin-directory
+.\b-config.ps1 -Exp superpowers -Action add-local -Path D:\src\my-skill  # 로컬 플러그인·스킬 폴더
+#    (선택) 품질 확인 명령: experiments\superpowers\experiment.json 의 check.command (예: "npm test")
 
 # 5) 지시문 작성: experiments\superpowers\prompts\01-task.md
 
@@ -98,6 +103,7 @@ claudecode-ab-lab\
 ├─ reset.ps1          작업 폴더를 실습 원본 상태로 되돌리기
 ├─ run-headless.ps1   A/B 반복 측정
 ├─ report.ps1         측정 결과 → REPORT.md
+├─ b-config.ps1       B 구성: 설치·제거·로컬/Git 추가·토큰·동등성 점검
 ├─ app.ps1            GUI 앱 실행(처음이면 의존성 설치)
 ├─ app\               Electron 앱 소스(docs\app.md)
 ├─ lib\common.ps1     공용 함수
@@ -108,7 +114,8 @@ claudecode-ab-lab\
 ├─ lab.local.json     (git 제외) 이 PC 전용 설정
 └─ experiments\
    └─ <이름>\
-      ├─ experiment.json   설명·모델·만든 날
+      ├─ experiment.json   설명·모델·만든 날·품질 확인 명령(check)
+      ├─ b-manifest.json   B 구성 기록(종류·이름·버전·출처·커밋)
       ├─ NOTES.md          B 구성·관찰·결론 기록
       ├─ REPORT.md         report.ps1 결과
       ├─ fixture\          실습 원본 프로젝트
@@ -158,3 +165,7 @@ claudecode-ab-lab\
 | 반복 측정의 쪽별 지시문 변형(`.B.md`) → `conditions.json`·보고서 표시 | 확인 |
 | `open-both.ps1`의 Windows Terminal 분할, `--plugin-dir` 실제 로드, B `skills\` 인식 | **미확인** - 첫 실험에서 `/plugin`, `/context`로 확인 필요 |
 | GUI 앱의 이미지 붙여넣기(Alt+V), 상태 신호(OSC 7501) | **미확인 / 미지원** - [docs/app.md](docs/app.md) 9절 |
+| B 구성: 공식 목록 조회, 설치(출처·커밋 기록), 켜고 끄기, 토큰 확인, 제거, 로컬 폴더·Git(하위 경로) 추가 | 실제 claude로 확인(짧은 경로의 시험 랩) |
+| 품질 확인 명령 → 결과·보고서, 블라인드 판정 → `judgments.json`·보고서 | 가짜 claude 와 앱 화면으로 확인 |
+| A/B 동등성 점검(다른 계정·요금제·계정 스킬·설정 차이 감지) | 가짜 claude 로 확인 |
+| 마켓플레이스 추가(`add-marketplace`), 실행 확인이 필요한 플러그인 설치 | **미확인** |

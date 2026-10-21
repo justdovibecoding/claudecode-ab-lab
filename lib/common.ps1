@@ -26,6 +26,7 @@ function Get-LabConfig {
 $Lab = Get-LabConfig
 
 function Get-Experiment([string]$Name) {
+    if ($Name -notmatch '^(?!\.+$)[A-Za-z0-9._-]+$') { throw "잘못된 실험 이름: $Name" }
     $dir = Join-Path $ExpRoot $Name
     $metaFile = Join-Path $dir 'experiment.json'
     if (-not (Test-Path $metaFile)) {
@@ -141,4 +142,151 @@ function Compare-Tree([string]$Before, [string]$After) {
     }
     foreach ($k in $a.Keys) { if (-not $b.ContainsKey($k)) { $out += "D $k" } }
     @($out | Sort-Object { $_.Substring(2) })
+}
+
+# ---------- claude 명령을 특정 설정 폴더로 실행 ----------
+
+# 결과: @{ Code; Lines } . 설정 폴더 환경 변수는 끝나면 되돌린다.
+function Invoke-ClaudeIn([string]$ConfigDir, [string[]]$Arguments) {
+    $old = $env:CLAUDE_CONFIG_DIR
+    try {
+        $env:CLAUDE_CONFIG_DIR = $ConfigDir
+        $global:LASTEXITCODE = 0
+        $lines = @(& claude @Arguments 2>&1 | ForEach-Object { "$_" })
+        [pscustomobject]@{ Code = $LASTEXITCODE; Lines = $lines }
+    } finally { $env:CLAUDE_CONFIG_DIR = $old }
+}
+
+# claude ... --json 결과에서 JSON 부분만 골라 객체로 만든다(안내 문구가 섞여 나와도 견딤).
+function ConvertFrom-ClaudeJson([string[]]$Lines) {
+    $text = ($Lines -join "`n").Trim()
+    $start = $text.IndexOfAny([char[]]'[{')
+    if ($start -lt 0) { return $null }
+    try { $text.Substring($start) | ConvertFrom-Json } catch { $null }
+}
+
+# ---------- B 구성 기록(b-manifest.json) ----------
+# items: { kind: installed-plugin | local-plugin | local-skill, name, version, source, commit, dirty, addedAt }
+
+function Get-BManifestPath($Exp) { Join-Path $Exp.Dir 'b-manifest.json' }
+
+function Get-BManifest($Exp) {
+    $file = Get-BManifestPath $Exp
+    if (Test-Path $file) {
+        $m = Get-Content $file -Raw -Encoding UTF8 | ConvertFrom-Json
+        return @($m.items | Where-Object { $_ })
+    }
+    @()
+}
+
+function Save-BManifest($Exp, $Items) {
+    $sorted = @($Items | Sort-Object kind, name)
+    Write-Utf8NoBom (Get-BManifestPath $Exp) ((@{ items = $sorted } | ConvertTo-Json -Depth 6) + "`n")
+}
+
+function Set-BManifestItem($Exp, $Item) {
+    $items = @(Get-BManifest $Exp | Where-Object { -not ($_.kind -eq $Item.kind -and $_.name -eq $Item.name) })
+    Save-BManifest $Exp ($items + [pscustomobject]$Item)
+}
+
+function Remove-BManifestItem($Exp, [string]$Kind, [string]$Name) {
+    Save-BManifest $Exp @(Get-BManifest $Exp | Where-Object { -not ($_.kind -eq $Kind -and $_.name -eq $Name) })
+}
+
+# 폴더가 git 저장소 안이면 커밋·변경 여부를 알려 준다(재현 기록용).
+function Get-GitInfo([string]$Path) {
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return $null }
+    $commit = (& git -C $Path rev-parse HEAD 2>$null)
+    if ($LASTEXITCODE -or -not $commit) { return $null }
+    $dirty = [bool](& git -C $Path status --porcelain 2>$null)
+    $remote = (& git -C $Path config --get remote.origin.url 2>$null)
+    [pscustomobject]@{ Commit = "$commit".Trim(); Dirty = $dirty; Remote = "$remote".Trim() }
+}
+
+# SKILL.md frontmatter 의 name (없으면 폴더 이름)
+function Get-SkillName([string]$SkillDir) {
+    $file = Join-Path $SkillDir 'SKILL.md'
+    $m = Select-String -Path $file -Pattern '^name:\s*(.+?)\s*$' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($m) { $m.Matches[0].Groups[1].Value.Trim('"', "'") } else { Split-Path $SkillDir -Leaf }
+}
+
+# ---------- A/B 동등성 ----------
+
+# 설정 폴더의 claude.ai 계정 스킬 이름 목록(skills\synced\<계정>\<스킬>\SKILL.md)
+function Get-SyncedSkills([string]$ConfigDir) {
+    $root = Join-Path $ConfigDir 'skills\synced'
+    @(Get-ChildItem $root -Recurse -Filter SKILL.md -ErrorAction SilentlyContinue |
+        ForEach-Object { Get-SkillName $_.DirectoryName } | Sort-Object -Unique)
+}
+
+# A/B 설정 폴더가 비교 대상 말고는 같은지 본다.
+#   계정(로그인), claude.ai 계정 스킬 목록, settings.json(enabledPlugins, theme 제외)
+# 결과: @{ Ok; Issues(문장 목록); Details }
+function Get-Equivalence($Exp) {
+    $issues = @()
+    $details = [ordered]@{}
+
+    $authA = Get-AuthStatus $VanillaConfig
+    $authB = Get-AuthStatus $Exp.ConfigB
+    if (-not ($authA -and $authA.loggedIn)) { $issues += 'A 로그인 안 됨' }
+    if (-not ($authB -and $authB.loggedIn)) { $issues += 'B 로그인 안 됨' }
+    if ($authA -and $authB -and $authA.loggedIn -and $authB.loggedIn) {
+        $same = ($authA.orgId -eq $authB.orgId) -and ($authA.email -eq $authB.email)
+        $details.sameAccount = $same
+        if (-not $same) { $issues += 'A와 B가 서로 다른 계정으로 로그인됨(계정 스킬·사용량 한도가 달라질 수 있음)' }
+        if ($authA.subscriptionType -ne $authB.subscriptionType) { $issues += "요금제가 다름(A: $($authA.subscriptionType), B: $($authB.subscriptionType))" }
+    }
+
+    $skillsA = Get-SyncedSkills $VanillaConfig
+    $skillsB = Get-SyncedSkills $Exp.ConfigB
+    $onlyA = @($skillsA | Where-Object { $_ -notin $skillsB })
+    $onlyB = @($skillsB | Where-Object { $_ -notin $skillsA })
+    $details.syncedSkills = [ordered]@{ A = $skillsA.Count; B = $skillsB.Count; onlyA = $onlyA; onlyB = $onlyB }
+    if ($onlyA.Count -or $onlyB.Count) {
+        $issues += "계정 스킬 목록이 다름(A에만: $($onlyA -join ', ') / B에만: $($onlyB -join ', ')). 양쪽을 한 번씩 실행해 동기화하거나 점검을 다시 하세요"
+    }
+
+    $read = {
+        param($dir)
+        $f = Join-Path $dir 'settings.json'
+        if (Test-Path $f) { try { Get-Content $f -Raw -Encoding UTF8 | ConvertFrom-Json } catch { $null } } else { $null }
+    }
+    $sA = & $read $VanillaConfig
+    $sB = & $read $Exp.ConfigB
+    $ignore = @('enabledPlugins', 'theme')
+    $keys = @(@($sA.PSObject.Properties.Name) + @($sB.PSObject.Properties.Name) | Where-Object { $_ -and $_ -notin $ignore } | Sort-Object -Unique)
+    $diffKeys = @()
+    foreach ($k in $keys) {
+        $va = if ($sA) { $sA.$k | ConvertTo-Json -Compress -Depth 10 } else { $null }
+        $vb = if ($sB) { $sB.$k | ConvertTo-Json -Compress -Depth 10 } else { $null }
+        if ($va -ne $vb) { $diffKeys += $k }
+    }
+    $details.settingsDiff = $diffKeys
+    if ($diffKeys.Count) { $issues += "settings.json 이 다름: $($diffKeys -join ', ') (enabledPlugins·theme 제외)" }
+
+    [pscustomobject]@{ Ok = ($issues.Count -eq 0); Issues = $issues; Details = $details }
+}
+
+# ---------- 품질 확인 명령 ----------
+
+# 작업 폴더에서 확인 명령(cmd.exe)을 실행한다. 결과: @{ Passed; ExitCode; TimedOut; Seconds; Output }
+function Invoke-CheckCommand([string]$WorkDir, [string]$Command, [int]$TimeoutSec = 600) {
+    $out = [IO.Path]::GetTempFileName()
+    $err = [IO.Path]::GetTempFileName()
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    try {
+        $p = Start-Process -FilePath 'cmd.exe' -ArgumentList '/d', '/s', '/c', "`"$Command`"" -WorkingDirectory $WorkDir `
+            -RedirectStandardOutput $out -RedirectStandardError $err -NoNewWindow -PassThru
+        $null = $p.Handle  # 종료 코드를 읽으려면 미리 핸들을 잡아 둬야 한다(PowerShell 5.1)
+        $timedOut = -not $p.WaitForExit($TimeoutSec * 1000)
+        if ($timedOut) { & taskkill /PID $p.Id /T /F 2>&1 | Out-Null; $p.WaitForExit(5000) | Out-Null }
+        $code = if ($timedOut) { $null } else { $p.ExitCode }
+        $text = ((Get-Content $out -Raw -Encoding Default) + (Get-Content $err -Raw -Encoding Default))
+        [pscustomobject]@{
+            Passed = (-not $timedOut) -and ($code -eq 0); ExitCode = $code; TimedOut = $timedOut
+            Seconds = [math]::Round($sw.Elapsed.TotalSeconds, 1); Output = "$text"
+        }
+    } finally {
+        Remove-Item $out, $err -ErrorAction SilentlyContinue
+    }
 }

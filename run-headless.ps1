@@ -61,8 +61,22 @@ $cond = [ordered]@{
     mcpB           = @((Get-Content (Join-Path $e.Dir 'mcp-B.json') -Raw | ConvertFrom-Json).mcpServers.PSObject.Properties | ForEach-Object Name)
     claudeVersion  = (& claude --version) -join ' '
     startedAt      = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+    bManifest      = @(Get-BManifest $e)
+    check          = $e.Meta.check
+    equivalence    = $null
 }
-Write-Utf8NoBom (Join-Path $outDir 'conditions.json') ($cond | ConvertTo-Json)
+
+# A/B 동등성(계정·계정 스킬·설정). 다르면 경고하고 조건에 남긴다(측정은 계속).
+Write-Host 'A/B 동등성 점검 중...'
+$eq = Get-Equivalence $e
+$cond.equivalence = [ordered]@{ ok = $eq.Ok; issues = @($eq.Issues) }
+if (-not $eq.Ok) { foreach ($issue in $eq.Issues) { Write-Warning "A/B 동등성: $issue" } }
+Write-Utf8NoBom (Join-Path $outDir 'conditions.json') ($cond | ConvertTo-Json -Depth 6)
+
+# 품질 확인 명령(experiment.json 의 check.command). 매 실행 뒤 작업 폴더에서 실행한다.
+$checkCmd = if ($e.Meta.check -and $e.Meta.check.command) { "$($e.Meta.check.command)" } else { '' }
+$checkTimeout = if ($e.Meta.check -and $e.Meta.check.timeoutSec) { [int]$e.Meta.check.timeoutSec } else { 600 }
+if ($checkCmd) { Write-Host "확인 명령: $checkCmd (제한 $checkTimeout 초)" }
 
 $oldConfig = $env:CLAUDE_CONFIG_DIR
 $oldOutputEncoding = $OutputEncoding
@@ -97,11 +111,22 @@ try {
             $changes = Compare-Tree $fixture $l.Work
             Write-Utf8NoBom "$base-changes.txt" (($changes -join "`n") + "`n")
 
+            # 확인 명령은 결과물 사본을 뜬 뒤 작업 폴더에서 실행한다(사본에는 확인 명령의 부산물이 섞이지 않음).
+            $checkPassed = $null
+            if ($checkCmd) {
+                $env:CLAUDE_CONFIG_DIR = $oldConfig
+                $ck = Invoke-CheckCommand $l.Work $checkCmd $checkTimeout
+                $checkPassed = $ck.Passed
+                $status = if ($ck.TimedOut) { "시간 초과($checkTimeout 초)" } else { "종료 코드 $($ck.ExitCode)" }
+                Write-Utf8NoBom "$base-check.txt" ("명령: $checkCmd`n결과: $(if ($ck.Passed) { '통과' } else { '실패' }) · $status · $($ck.Seconds)초`n`n$($ck.Output)")
+                Write-Host "[$Exp/$side] $i/$Runs 확인: $(if ($ck.Passed) { '통과' } else { '실패' }) ($status)"
+            }
+
             $row = [ordered]@{
                 Side = $side; Run = $i; Exit = $exit; IsError = $null; Subtype = $null
                 CostUSD = $null; Turns = $null; Seconds = $null
                 InputTokens = $null; OutputTokens = $null; CacheReadTokens = $null
-                ChangedFiles = $changes.Count; SessionId = $null
+                ChangedFiles = $changes.Count; CheckPassed = $checkPassed; SessionId = $null
             }
             try {
                 $r = ($raw -join "`n") | ConvertFrom-Json
@@ -131,7 +156,7 @@ try {
 }
 
 $rows | Export-Csv (Join-Path $outDir 'summary.csv') -NoTypeInformation -Encoding UTF8
-$rows | Format-Table Side, Run, Exit, IsError, CostUSD, Turns, Seconds, OutputTokens, ChangedFiles -AutoSize
+$rows | Format-Table Side, Run, Exit, IsError, CostUSD, Turns, Seconds, OutputTokens, ChangedFiles, CheckPassed -AutoSize
 
 Write-Host '쪽별 평균(오류 제외):'
 $rows | Where-Object { -not $_.IsError } | Group-Object Side | ForEach-Object {
@@ -143,7 +168,9 @@ $rows | Where-Object { -not $_.IsError } | Group-Object Side | ForEach-Object {
         AvgSeconds   = [math]::Round(($_.Group | Measure-Object Seconds -Average).Average, 1)
         AvgOutTokens = [math]::Round(($_.Group | Measure-Object OutputTokens -Average).Average, 0)
         AvgChanged   = [math]::Round(($_.Group | Measure-Object ChangedFiles -Average).Average, 1)
+        CheckPassed  = if ($checkCmd) { "$(@($_.Group | Where-Object CheckPassed).Count)/$($_.Count)" } else { '-' }
     }
 } | Format-Table -AutoSize
+if (-not $eq.Ok) { Write-Warning 'A/B 동등성 경고가 있었습니다. conditions.json 과 보고서에 기록됨.' }
 Write-Host "결과: $outDir"
 Write-Host "전체 요약: .\report.ps1 -Exp $Exp"

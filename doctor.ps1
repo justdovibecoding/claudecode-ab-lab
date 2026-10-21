@@ -121,6 +121,15 @@ if ($Exp) {
 
     $prompts = @(Get-ChildItem (Join-Path $e.Dir 'prompts') -Filter *.md -ErrorAction SilentlyContinue)
     Write-Check 정보 "지시문 $($prompts.Count)개: $(($prompts | ForEach-Object BaseName) -join ', ')"
+
+    if ($e.Meta.check -and $e.Meta.check.command) { Write-Check OK "확인 명령: $($e.Meta.check.command)" }
+    else { Write-Check 정보 '확인 명령 없음 - 반복 측정에서 자동 품질 확인을 하려면 experiment.json 의 check.command 에 지정' }
+
+    Write-Host ''
+    Write-Host "== A/B 동등성 ==" -ForegroundColor Cyan
+    $eq = Get-Equivalence $e
+    if ($eq.Ok) { Write-Check OK "같은 계정, 계정 스킬 $($eq.Details.syncedSkills.A)개 동일, settings.json 동일(enabledPlugins·theme 제외)" }
+    else { foreach ($issue in $eq.Issues) { Write-Check 주의 $issue } }
 }
 
 Write-Host ''

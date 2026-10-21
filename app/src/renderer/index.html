@@ -29,6 +29,7 @@
     <div class="label">화면</div>
     <div class="tabs" role="tablist">
       <button type="button" role="tab" data-view="live" aria-selected="true">대화형 비교</button>
+      <button type="button" role="tab" data-view="bconfig" aria-selected="false">B 구성</button>
       <button type="button" role="tab" data-view="check" aria-selected="false">점검 · 로그인</button>
       <button type="button" role="tab" data-view="headless" aria-selected="false">반복 측정</button>
       <button type="button" role="tab" data-view="results" aria-selected="false">결과</button>
@@ -127,6 +128,62 @@
       </div>
     </section>
 
+    <!-- B 구성 -->
+    <section id="view-bconfig" class="view" data-view="bconfig" hidden>
+      <div class="bc-grid">
+        <div class="bc-col">
+          <div class="card">
+            <div class="card-head">
+              <h2>A/B 동등성</h2>
+              <button type="button" id="bc-eq-run" class="small">점검</button>
+            </div>
+            <p class="hint">비교 대상 말고는 같은지 봅니다: 로그인 계정·요금제, claude.ai 계정 스킬 목록, settings.json(enabledPlugins·theme 제외).</p>
+            <ul id="bc-eq" class="eq"><li>아직 점검하지 않았습니다.</li></ul>
+          </div>
+          <div class="card grow">
+            <div class="card-head">
+              <h2>B 구성</h2>
+              <button type="button" id="bc-refresh" class="small">새로고침</button>
+            </div>
+            <p class="hint">B에만 적용됩니다. 무엇을 어디서 어떤 버전으로 넣었는지 <code>b-manifest.json</code>에 기록되어 측정 조건과 보고서에 붙습니다.</p>
+            <div class="table-box">
+              <table class="bc-table">
+                <thead><tr><th>종류</th><th>이름</th><th>버전 · 커밋</th><th>출처</th><th>동작</th></tr></thead>
+                <tbody id="bc-items"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <div class="bc-col">
+          <div class="card grow">
+            <div class="card-head">
+              <h2>플러그인 목록에서 설치</h2>
+              <button type="button" id="bc-load-available" class="small">목록 불러오기</button>
+            </div>
+            <input id="bc-search" type="search" placeholder="이름·설명 검색" aria-label="플러그인 검색">
+            <ul id="bc-available" class="avail"></ul>
+            <div class="row">
+              <input id="bc-market" type="text" placeholder="마켓플레이스 추가: owner/repo 또는 URL" aria-label="마켓플레이스 주소">
+              <button type="button" id="bc-market-add" class="small">추가</button>
+            </div>
+          </div>
+          <div class="card">
+            <h2>로컬 폴더 · Git</h2>
+            <div class="row">
+              <button type="button" id="bc-add-local" class="small">폴더 선택… (플러그인 또는 스킬)</button>
+            </div>
+            <div class="row">
+              <input id="bc-git-url" type="text" placeholder="Git 주소" aria-label="Git 주소">
+              <input id="bc-git-ref" type="text" placeholder="태그·커밋(선택)" aria-label="Git 태그 또는 커밋">
+              <input id="bc-git-sub" type="text" placeholder="하위 경로(선택)" aria-label="하위 경로">
+              <button type="button" id="bc-add-git" class="small">가져오기</button>
+            </div>
+          </div>
+          <pre id="bc-log" class="out log" aria-label="B 구성 작업 기록"></pre>
+        </div>
+      </div>
+    </section>
+
     <!-- 점검 · 로그인 -->
     <section id="view-check" class="view" data-view="check" hidden>
       <div class="toolbar">
@@ -161,6 +218,12 @@
         <button type="button" id="btn-hl-cancel">취소</button>
       </div>
       <p class="hint">지시문 옆에 <code>이름.A.md</code> / <code>이름.B.md</code> 가 있으면 그쪽에는 변형을 보내고 결과에 표시합니다.</p>
+      <div class="toolbar wrap">
+        <label>확인 명령 <input id="hl-check" type="text" size="42" placeholder="예: npm test · 비우면 확인 안 함"></label>
+        <label>제한(초) <input id="hl-check-timeout" type="number" min="10" max="7200" value="600"></label>
+        <button type="button" id="btn-hl-check-save" class="small">확인 명령 저장</button>
+      </div>
+      <p class="hint">매 실행 뒤 작업 폴더에서 실행해 종료 코드 0이면 "통과"로 기록합니다(<code>experiment.json</code>의 <code>check</code>).</p>
       <pre id="headless-out" class="out"></pre>
     </section>
 
@@ -170,7 +233,24 @@
         <button type="button" id="btn-report" class="primary">보고서 만들기</button>
         <button type="button" id="btn-open-exp2">실험 폴더 열기</button>
       </div>
-      <pre id="report-out" class="out"></pre>
+      <div class="results-grid">
+        <pre id="report-out" class="out"></pre>
+        <div class="card judge">
+          <div class="card-head">
+            <h2>블라인드 판정</h2>
+          </div>
+          <div class="row">
+            <select id="jd-run" aria-label="판정할 측정"></select>
+            <button type="button" id="jd-load" class="small">불러오기</button>
+            <label class="check"><input type="checkbox" id="jd-reveal"> 정체 공개</label>
+            <span class="spacer"></span>
+            <button type="button" id="jd-save" class="small primary">판정 저장</button>
+          </div>
+          <p class="hint">A/B를 가리고 "답안 N"으로 섞어 보여 줍니다. 저장한 뒤 "보고서 만들기"를 누르면 표에 반영됩니다.</p>
+          <p id="jd-summary" class="hint"></p>
+          <div id="jd-items" class="jd-items"></div>
+        </div>
+      </div>
     </section>
   </main>
 </div>
@@ -178,6 +258,9 @@
 <script src="../../node_modules/@xterm/xterm/lib/xterm.js"></script>
 <script src="../../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
 <script src="../shared/prompt.js"></script>
+<script src="../shared/judge.js"></script>
 <script src="app.js"></script>
+<script src="bconfig.js"></script>
+<script src="judging.js"></script>
 </body>
 </html>

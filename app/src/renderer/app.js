@@ -42,6 +42,20 @@ async function guard(fn) {
   }
 }
 
+// 요소 만들기(글자는 textContent 로만 넣는다).
+function el(tag, attrs, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v === undefined || v === null || v === false) continue;
+    if (k === 'class') node.className = v;
+    else if (k === 'text') node.textContent = v;
+    else if (k.startsWith('on')) node.addEventListener(k.slice(2).toLowerCase(), v);
+    else node.setAttribute(k, v === true ? '' : String(v));
+  }
+  for (const c of children) if (c !== null && c !== undefined) node.append(c);
+  return node;
+}
+
 function appendOut(out, line, isErr) {
   if (isErr) {
     const span = document.createElement('span');
@@ -130,6 +144,10 @@ function selectExperiment(name) {
       sel.appendChild(new Option(mark ? `${p.name} (${mark})` : p.name, p.name));
     }
   }
+  $('#hl-check').value = e.check.command;
+  $('#hl-check-timeout').value = e.check.timeoutSec;
+  BConfig.onExperiment();
+  Judging.onExperiment();
   if ($('#view-results').hidden === false) showReport();
 }
 
@@ -338,7 +356,8 @@ function showView(view) {
   for (const tab of $$('.tabs button')) tab.setAttribute('aria-selected', String(tab.dataset.view === view));
   for (const sec of $$('.view')) sec.hidden = sec.dataset.view !== view;
   if (view === 'live') for (const side of SIDES) terms[side].fit.fit();
-  if (view === 'results') showReport();
+  if (view === 'bconfig') BConfig.show();
+  if (view === 'results') { showReport(); Judging.show(); }
 }
 
 async function showReport() {
@@ -443,6 +462,17 @@ function bind() {
     $('#btn-hl-run').disabled = false;
     guard(() => loadExperiments(state.exp.name));
   });
+  $('#btn-hl-check-save').addEventListener('click', async () => {
+    if (!needExp()) return;
+    const saved = await guard(() => api.setCheck(state.exp.name, {
+      command: $('#hl-check').value,
+      timeoutSec: Number($('#hl-check-timeout').value),
+    }));
+    if (saved) {
+      state.exp.check = saved;
+      toast(saved.command ? `확인 명령 저장: ${saved.command}` : '확인 명령을 비웠습니다(확인 안 함).');
+    }
+  });
   $('#btn-hl-cancel').addEventListener('click', () => {
     if (state.headlessRun) guard(() => api.cancelScript(state.headlessRun));
   });
@@ -459,6 +489,8 @@ function bind() {
 async function init() {
   for (const side of SIDES) makeTerm(side);
   bind();
+  BConfig.bind();
+  Judging.bind();
   renderPrompt(false);
   renderStatus();
   const info = await guard(() => api.info());
@@ -469,4 +501,5 @@ async function init() {
   await guard(() => loadExperiments(null));
 }
 
-init();
+// bconfig.js, judging.js 가 모두 읽힌 뒤 시작한다.
+document.addEventListener('DOMContentLoaded', init);

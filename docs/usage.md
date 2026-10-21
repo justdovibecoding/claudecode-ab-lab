@@ -84,7 +84,32 @@ experiments\superpowers\
 
 ## 3. B에 비교 대상 넣기
 
-세 방법 중 하나를 고르거나 섞어 씁니다. 어떤 방법이든 **A에는 들어가지 않습니다.**
+어떤 방법이든 **A에는 들어가지 않습니다.** 가장 쉬운 방법은 앱의 **B 구성** 화면이나 `b-config.ps1`입니다.
+
+### 방법 0. `b-config.ps1` (앱의 "B 구성" 화면과 같은 기능)
+
+```powershell
+.\b-config.ps1 -Exp superpowers                                   # 현재 B 구성
+.\b-config.ps1 -Exp superpowers -Action available                 # 설치 가능한 플러그인(공식 목록 포함)
+.\b-config.ps1 -Exp superpowers -Action install -Plugin superpowers@anthropic-plugin-directory
+.\b-config.ps1 -Exp superpowers -Action details -Plugin superpowers@anthropic-plugin-directory   # 구성 요소·예상 토큰
+.\b-config.ps1 -Exp superpowers -Action disable -Plugin <id>      # enable 도 같은 방식
+.\b-config.ps1 -Exp superpowers -Action uninstall -Plugin <id>
+.\b-config.ps1 -Exp superpowers -Action add-marketplace -Source owner/repo
+.\b-config.ps1 -Exp superpowers -Action add-local -Path D:\src\my-plugin      # 플러그인/스킬 자동 판별
+.\b-config.ps1 -Exp superpowers -Action add-git -Url https://github.com/o/r -Ref v1.2 -SubPath plugins/x
+.\b-config.ps1 -Exp superpowers -Action remove-local -Kind skill -Name my-skill
+```
+
+- 설치·추가할 때마다 `experiments\<이름>\b-manifest.json`에 **종류·이름·버전·출처·커밋**이 기록되고, 반복 측정의
+  `conditions.json`과 보고서의 "B 구성" 아래에 그대로 붙습니다. 같은 버전으로 다시 찍을 때 근거가 됩니다.
+- 로컬 폴더가 git 저장소 안이면 커밋과 "수정본" 여부를 함께 기록합니다. Git 추가는 지정한 태그·커밋으로 받습니다.
+- `details`의 "항상 추가되는 토큰"은 B가 매 세션 컨텍스트를 얼마나 늘리는지 보여 줍니다(추정치).
+- B 터미널에서 `/plugin`으로 직접 설치한 것도 목록에 나오지만 출처가 기록되지 않아 "기록 없음"으로 표시됩니다.
+- 플러그인 설치는 `config-B\plugins\cache\` 아래로 git 복제를 하므로, 저장소 경로가 길면 Windows 경로 길이 제한에
+  걸릴 수 있습니다([troubleshooting.md](troubleshooting.md)).
+
+아래 방법 1–3은 같은 일을 손으로 하는 방법입니다.
 
 ### 방법 1. 플러그인 폴더 넣기 (`plugins\`, 설치 없이)
 
@@ -260,7 +285,9 @@ A/B에 **같은 모드**를 쓰는 한에서 과제에 맞는 모드를 고르�
 
 | 파일 | 내용 |
 |---|---|
-| `conditions.json` | 실험, 지시문, 변형을 받은 쪽(`promptOverride`), 회차, 모델, 권한 모드, 예산 한도, B 구성(플러그인·스킬·설치 여부·MCP), Claude Code 버전, 시작 시각 |
+| `conditions.json` | 실험, 지시문, 변형을 받은 쪽(`promptOverride`), 회차, 모델, 권한 모드, 예산 한도, B 구성(플러그인·스킬·설치 여부·MCP·`bManifest`), 확인 명령(`check`), A/B 동등성(`equivalence`), Claude Code 버전, 시작 시각 |
+| `A-1-check.txt` … | 확인 명령의 결과와 출력(확인 명령이 있을 때) |
+| `judgments.json` | 블라인드 판정(섞인 순서와 답안별 판정·메모). 앱에서 판정하면 생김 |
 | `prompt.md`, `prompt.A.md`, `prompt.B.md` | 사용한 지시문 사본(변형이 있을 때만 쪽별 파일) |
 | `A-1.json` … | `claude -p` JSON 원본 |
 | `A-1-result.md` … | 최종 응답 텍스트 |
@@ -269,6 +296,32 @@ A/B에 **같은 모드**를 쓰는 한에서 과제에 맞는 모드를 고르�
 | `summary.csv` | 실행별 Exit, IsError, Subtype, CostUSD, Turns, Seconds, 토큰, ChangedFiles, SessionId |
 
 ---
+
+### 품질 확인 명령
+
+`experiments\<이름>\experiment.json`의 `check`에 명령을 적으면(앱의 "반복 측정" 화면에서도 편집 가능),
+매 실행 뒤 결과물 사본을 뜬 다음 **작업 폴더에서** `cmd.exe`로 실행해 종료 코드 0이면 통과로 기록합니다.
+
+```json
+"check": { "command": "npm test", "timeoutSec": 600 }
+```
+
+- 실행별 `<쪽>-<회차>-check.txt`(명령·결과·출력), `summary.csv`의 `CheckPassed`, 보고서의 "확인 통과" 열.
+- 제한 시간을 넘기면 실패로 기록하고 프로세스를 끝냅니다.
+- `findstr`처럼 BOM 붙은 UTF-8 파일을 못 읽는 명령이 있으니, 확인 명령은 실제 작업 폴더에서 먼저 손으로 돌려 보세요.
+
+### A/B 동등성
+
+반복 측정을 시작할 때 A/B 설정 폴더가 비교 대상 말고는 같은지 점검하고 `conditions.json`의 `equivalence`에 남깁니다.
+다르면 경고만 하고 측정은 계속하며, 보고서에 "A/B 동등성 경고"로 표시됩니다. 보는 항목:
+
+| 항목 | 다르면 생기는 문제 |
+|---|---|
+| 로그인 계정·요금제 | 계정 스킬, 사용량 한도, 모델 접근이 달라짐 |
+| claude.ai 계정 스킬 목록(`skills\synced\`) | 한쪽에만 스킬이 있음. 양쪽을 한 번씩 실행하면 다시 동기화됨 |
+| `settings.json`(`enabledPlugins`, `theme` 제외) | 권한 모드·훅·환경 변수 등 조건 차이 |
+
+`.\doctor.ps1 -Exp <이름>`, `.\b-config.ps1 -Exp <이름> -Action equivalence`, 앱의 "B 구성" 화면에서도 볼 수 있습니다.
 
 ## 7. 보고서
 
@@ -286,8 +339,11 @@ A/B에 **같은 모드**를 쓰는 한에서 과제에 맞는 모드를 고르�
 
 - 평균은 오류 없이 끝난 실행만으로 계산합니다.
 - 비용은 Claude Code가 보고한 **API 기준 추정값**입니다. 구독 요금제에서는 실제 청구액이 아닙니다.
-- **품질(결과가 맞았는가)은 숫자로 나오지 않습니다.** `*-work\`와 `*-changes.txt`, `*-result.md`를 보고
-  `NOTES.md`의 "관찰"에 직접 판정을 적으세요. 판정 기준은 [methodology.md](methodology.md)를 참고하세요.
+- 품질은 두 가지로 표에 들어갑니다.
+  - **확인 통과**: 확인 명령이 있으면 통과 수/실행 수.
+  - **사람 판정**: 앱의 "결과" 화면 → "블라인드 판정"에서 A/B를 가린 "답안 N"을 보고 통과·부분·실패를 고르면
+    `results\<측정>\judgments.json`에 저장되고 "통과·부분/판정" 수로 표시됩니다. 순서는 처음 열 때 섞여 고정되며,
+    "정체 공개"를 켜야 쪽과 쪽별 집계가 보입니다. 판정 기준은 [methodology.md](methodology.md)를 참고하세요.
 
 ---
 

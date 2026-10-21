@@ -40,7 +40,8 @@
 - A/B `settings.json`의 `syncClaudeAiPlugins`·`syncClaudeAiSkills`, `hooks`·`enabledPlugins`·`mcpServers`·`env` 항목
 - A/B 로그인 상태(방식·요금제)
 - A 설정 폴더의 `agents\`, `commands\`, `CLAUDE.md`
-- B: 실습 원본이 비었는지, 플러그인 폴더의 `.claude-plugin\plugin.json`, 스킬 폴더의 `SKILL.md`, `/plugin` 설치 기록, `mcp-B.json` 서버, 지시문 목록
+- B: 실습 원본이 비었는지, 플러그인 폴더의 `.claude-plugin\plugin.json`, 스킬 폴더의 `SKILL.md`, `/plugin` 설치 기록, `mcp-B.json` 서버, 지시문 목록, 확인 명령
+- A/B 동등성: 계정·요금제, 계정 스킬 목록, settings.json(enabledPlugins·theme 제외)
 
 결과 등급: `[OK]` 정상 · `[정보]` 확인만 · `[주의]` 비교에 영향 가능 · `[오류]` 고쳐야 함.
 
@@ -108,6 +109,8 @@
 
 - PowerShell 5.1의 파이프 인코딩을 UTF-8로 바꿔 한국어 지시문을 전달하고, 끝나면 되돌립니다.
 - 지시문 옆에 `<이름>.A.md` / `<이름>.B.md`가 있으면 그쪽에는 변형을 보내고 `conditions.json`의 `promptOverride`에 기록합니다.
+- 시작할 때 A/B 동등성을 점검해 `conditions.json`의 `equivalence`에 남기고, 다르면 경고합니다(측정은 계속).
+- `experiment.json`의 `check.command`가 있으면 매 실행 뒤 작업 폴더에서 실행해 `CheckPassed`와 `<쪽>-<회차>-check.txt`로 기록합니다.
 - 결과 파일 목록은 [usage.md 6절](usage.md#6-반복-측정-근거용)을 보세요.
 
 ## report.ps1
@@ -116,7 +119,24 @@
 |---|---|
 | `-Exp <이름>` | 필수 |
 
-`results\*\summary.csv`와 `conditions.json`을 모아 `REPORT.md`를 씁니다(덮어씀).
+`results\*\summary.csv`와 `conditions.json`, `judgments.json`을 모아 `REPORT.md`를 씁니다(덮어씀).
+측정마다 B 구성 기록(버전·커밋), 지시문 변형, A/B 동등성 경고, 확인 명령을 적고, 표에 "확인 통과"와 "사람 판정(통과·부분/판정)" 열을 둡니다.
+
+## b-config.ps1
+
+| 옵션 | 설명 |
+|---|---|
+| `-Exp <이름>` | 필수 |
+| `-Action` | `list`(기본), `available`, `install`, `uninstall`, `enable`, `disable`, `add-marketplace`, `add-local`, `add-git`, `remove-local`, `details`, `equivalence` |
+| `-Plugin <id>` | `install`·`uninstall`·`enable`·`disable`·`details` 대상(`이름@마켓플레이스`) |
+| `-Source <주소>` | `add-marketplace`: owner/repo, git·https URL, 경로 |
+| `-Path <폴더>` | `add-local`: 플러그인(`.claude-plugin\plugin.json`) 또는 스킬(`SKILL.md`) 폴더 |
+| `-Url`, `-Ref`, `-SubPath` | `add-git`: 저장소, 태그·커밋(선택), 저장소 안 하위 경로(선택) |
+| `-Kind plugin\|skill`, `-Name` | `add-local`/`add-git`에서 종류·폴더 이름 지정, `remove-local` 대상 |
+| `-Json` | 결과를 JSON 한 줄로 출력(앱용) |
+
+모든 동작은 `CLAUDE_CONFIG_DIR=<실험>\config-B`로 `claude plugin ...`을 실행하거나 실험 폴더의 `plugins\`·`skills\`를
+바꿉니다. 기록은 `b-manifest.json`. 실패하면 오류 메시지와 함께 종료 코드 1.
 
 ## app.ps1
 
@@ -141,3 +161,9 @@
 | `Get-AuthStatus` | 설정 폴더별 `claude auth status` |
 | `Find-AncestorContext` | 상위 폴더의 `CLAUDE.md` 등 찾기 |
 | `Compare-Tree` | 두 폴더의 파일 해시 비교(추가/수정/삭제) |
+| `Invoke-ClaudeIn` | 지정한 설정 폴더로 `claude` 명령 실행(끝나면 환경 변수 복원) |
+| `Get-BManifest` / `Set-BManifestItem` / `Remove-BManifestItem` | B 구성 기록 읽기·쓰기 |
+| `Get-GitInfo` | 폴더의 git 커밋·수정 여부·원격 주소 |
+| `Get-SyncedSkills` | 설정 폴더의 claude.ai 계정 스킬 이름 목록 |
+| `Get-Equivalence` | A/B 동등성(계정·요금제·계정 스킬·settings.json) |
+| `Invoke-CheckCommand` | 작업 폴더에서 확인 명령 실행(제한 시간, 종료 코드 0 = 통과) |

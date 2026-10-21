@@ -1,5 +1,5 @@
 // Electron 메인 프로세스: 창, A/B 터미널(node-pty), PowerShell 스크립트 실행, 세션 기록.
-const { app, BrowserWindow, Menu, ipcMain, shell, clipboard } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, shell, clipboard, dialog } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { execFileSync, spawn } = require('child_process');
@@ -13,7 +13,7 @@ const lab = require('./lab');
 const APP_DIR = path.resolve(__dirname, '..', '..');
 const LAB_ROOT = lab.resolveLabRoot(process.env, APP_DIR);
 const SIDES = ['A', 'B'];
-const SCRIPTS = new Set(['doctor', 'reset', 'run-headless', 'report', 'new-exp', 'list-exp']);
+const SCRIPTS = new Set(['doctor', 'reset', 'run-headless', 'report', 'new-exp', 'list-exp', 'b-config']);
 const PERMISSION_MODES = new Set(['', 'manual', 'acceptEdits', 'auto', 'plan', 'dontAsk', 'bypassPermissions']);
 
 let win = null;
@@ -180,6 +180,26 @@ function registerIpc() {
     });
     return runId;
   });
+  // -Json 으로 실행해 마지막 JSON 줄을 돌려준다. 실패하면 PowerShell 오류의 첫 줄을 메시지로.
+  handle('script:json', async (name, params) => {
+    const { code, stdout, stderr } = await runPs(scriptPath(name), { ...(params || {}), Json: true }, { cwd: LAB_ROOT, env: psEnv() }).done;
+    if (code !== 0) {
+      const first = (stderr || stdout).split(/\r?\n/).map((s) => s.trim()).find((s) => s && !/^At |^\+|^\s*\+/.test(s));
+      throw new Error(first || `${name} 실패(종료 코드 ${code})`);
+    }
+    const line = stdout.split(/\r?\n/).map((s) => s.trim()).filter((s) => s.startsWith('{') || s.startsWith('[')).pop();
+    if (!line) throw new Error(`${name}: JSON 결과가 없습니다.`);
+    return JSON.parse(line);
+  });
+  handle('dialog:folder', async (title) => {
+    const r = await dialog.showOpenDialog(win, { title: String(title || '폴더 선택'), properties: ['openDirectory'] });
+    return r.canceled ? null : r.filePaths[0];
+  });
+  handle('exp:setCheck', (exp, check) => lab.updateExperimentCheck(lab.experimentDir(LAB_ROOT, exp), check));
+  handle('results:list', (exp) => lab.listResultRuns(lab.experimentDir(LAB_ROOT, exp)));
+  handle('results:items', (exp, run) => lab.readRunItems(lab.experimentDir(LAB_ROOT, exp), run));
+  handle('results:save', (exp, run, items) => lab.saveJudgments(lab.experimentDir(LAB_ROOT, exp), run, items));
+
   handle('script:cancel', (runId) => {
     const child = scripts.get(runId);
     if (child) killTree(child.pid);

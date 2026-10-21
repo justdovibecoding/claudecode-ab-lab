@@ -29,6 +29,12 @@ contextBridge.exposeInMainWorld('lab', {
   onExit: (cb) => on('live:exit', cb),
 
   runScript: (name, params) => call('script:run', name, params),
+  runJson: (name, params) => call('script:json', name, params),
+  pickFolder: (title) => call('dialog:folder', title),
+  setCheck: (exp, check) => call('exp:setCheck', exp, check),
+  listResults: (exp) => call('results:list', exp),
+  readResultItems: (exp, run) => call('results:items', exp, run),
+  saveJudgments: (exp, run, items) => call('results:save', exp, run, items),
   cancelScript: (runId) => call('script:cancel', runId),
   onScriptLine: (cb) => on('script:line', cb),
   onScriptDone: (cb) => on('script:done', cb),

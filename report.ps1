@@ -36,12 +36,31 @@ foreach ($r in $runs) {
     $lines += ''
     $lines += "- 지시문: ``$($cond.prompt)`` / 모델: ``$($cond.model)`` / 권한 모드: ``$($cond.permissionMode)`` / Claude Code: $($cond.claudeVersion)"
     $lines += "- B 구성: 플러그인 [$($cond.plugins -join ', ')] · 스킬 [$($cond.skills -join ', ')] · /plugin 설치 $($cond.installedB) · MCP [$($cond.mcpB -join ', ')]"
+    foreach ($m in @($cond.bManifest | Where-Object { $_ })) {
+        $commit = if ($m.commit) { " · 커밋 ``$("$($m.commit)".Substring(0, [Math]::Min(12, "$($m.commit)".Length)))``$(if ($m.dirty) { '(수정본)' })" } else { '' }
+        $lines += "  - $($m.kind) ``$($m.name)``$(if ($m.version) { " $($m.version)" })$commit$(if ($m.source) { " · $($m.source)" })"
+    }
     if (@($cond.promptOverride).Count) {
         $lines += "- **지시문 변형**: $(@($cond.promptOverride) -join ', ') 쪽은 다른 지시문을 받음(``prompt.<쪽>.md`` 참고). 비교 조건이 다르므로 결과 해석 시 밝힐 것"
     }
+    if ($cond.equivalence -and -not $cond.equivalence.ok) {
+        $lines += "- **A/B 동등성 경고**: $(@($cond.equivalence.issues) -join ' / ')"
+    }
+    if ($cond.check -and $cond.check.command) { $lines += "- 확인 명령: ``$($cond.check.command)``" }
+
+    # 사람 판정(judgments.json, 앱의 결과 화면에서 블라인드로 기록)
+    $judged = @{}
+    $jFile = Join-Path $r.FullName 'judgments.json'
+    if (Test-Path $jFile) {
+        $j = Get-Content $jFile -Raw -Encoding UTF8 | ConvertFrom-Json
+        foreach ($p in @($j.items.PSObject.Properties)) { if ($p.Value.verdict) { $judged[$p.Name] = $p.Value.verdict } }
+    }
+    $hasCheck = @($rows | Where-Object { $_.CheckPassed -in 'True', 'False' }).Count -gt 0
+    $hasJudge = $judged.Count -gt 0
+
     $lines += ''
-    $lines += '| 쪽 | 성공/전체 | 평균 비용(USD) | 평균 턴 | 평균 시간(초) | 평균 출력 토큰 | 평균 변경 파일 |'
-    $lines += '|---|---|---|---|---|---|---|'
+    $lines += '| 쪽 | 성공/전체 | 확인 통과 | 사람 판정(통과·부분/판정) | 평균 비용(USD) | 평균 턴 | 평균 시간(초) | 평균 출력 토큰 | 평균 변경 파일 |'
+    $lines += '|---|---|---|---|---|---|---|---|---|'
     $avg = @{}
     foreach ($side in 'A', 'B') {
         $all = @($rows | Where-Object Side -eq $side)
@@ -52,14 +71,17 @@ foreach ($r in $runs) {
             Out = Get-Avg $ok OutputTokens; Chg = Get-Avg $ok ChangedFiles
         }
         $a = $avg[$side]
-        $lines += "| $side | $($ok.Count)/$($all.Count) | $(Format-Num $a.Cost 4) | $(Format-Num $a.Turns 1) | $(Format-Num $a.Sec 1) | $(Format-Num $a.Out 0) | $(Format-Num $a.Chg 1) |"
+        $check = if ($hasCheck) { "$(@($all | Where-Object CheckPassed -eq 'True').Count)/$(@($all | Where-Object { $_.CheckPassed -in 'True', 'False' }).Count)" } else { '-' }
+        $mine = @($judged.Keys | Where-Object { $_ -like "$side-*" } | ForEach-Object { $judged[$_] })
+        $judge = if ($hasJudge -and $mine.Count) { "$(@($mine | Where-Object { $_ -eq 'pass' }).Count)·$(@($mine | Where-Object { $_ -eq 'partial' }).Count)/$($mine.Count)" } else { '-' }
+        $lines += "| $side | $($ok.Count)/$($all.Count) | $check | $judge | $(Format-Num $a.Cost 4) | $(Format-Num $a.Turns 1) | $(Format-Num $a.Sec 1) | $(Format-Num $a.Out 0) | $(Format-Num $a.Chg 1) |"
     }
     if ($avg.ContainsKey('A') -and $avg.ContainsKey('B')) {
         $A = $avg['A']; $B = $avg['B']
-        $lines += "| 차이 | | $(Format-Delta $A.Cost $B.Cost) | $(Format-Delta $A.Turns $B.Turns) | $(Format-Delta $A.Sec $B.Sec) | $(Format-Delta $A.Out $B.Out) | $(Format-Delta $A.Chg $B.Chg) |"
+        $lines += "| 차이 | | | | $(Format-Delta $A.Cost $B.Cost) | $(Format-Delta $A.Turns $B.Turns) | $(Format-Delta $A.Sec $B.Sec) | $(Format-Delta $A.Out $B.Out) | $(Format-Delta $A.Chg $B.Chg) |"
     }
     $lines += ''
-    $lines += "실행별 결과물: ``results\$($r.Name)\<쪽>-<회차>-work\`` · 변경 목록 ``*-changes.txt`` · 최종 응답 ``*-result.md``"
+    $lines += "실행별 결과물: ``results\$($r.Name)\<쪽>-<회차>-work\`` · 변경 목록 ``*-changes.txt`` · 최종 응답 ``*-result.md`` · 확인 결과 ``*-check.txt``"
     $lines += ''
 }
 

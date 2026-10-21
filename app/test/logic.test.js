@@ -9,6 +9,69 @@ const { buildChildEnv } = require('../src/main/env');
 const { psQuote, buildPsArgs } = require('../src/main/powershell');
 const { resolveClaude } = require('../src/main/claude-resolve');
 const lab = require('../src/main/lab');
+const J = require('../src/shared/judge');
+
+// 시험용 고정 난수
+function seq(values) {
+  let i = 0;
+  return () => values[i++ % values.length];
+}
+
+test('블라인드 순서: 모든 답안을 한 번씩 섞고, 저장된 순서가 맞으면 유지', () => {
+  const keys = ['A-1', 'A-2', 'B-1', 'B-2'];
+  const order = J.makeBlindOrder(keys, seq([0.1, 0.9, 0.5]));
+  assert.deepEqual(order.slice().sort(), keys);
+  assert.notDeepEqual(order, keys);
+  assert.deepEqual(J.ensureOrder(['B-2', 'A-1', 'B-1', 'A-2'], keys), ['B-2', 'A-1', 'B-1', 'A-2']);
+  assert.equal(J.ensureOrder(['A-1', 'B-1'], keys).length, 4); // 결과가 늘면 새로 섞음
+});
+
+test('판정 집계와 검사', () => {
+  const keys = ['A-1', 'A-2', 'B-1', 'B-2'];
+  const s = J.summarize({ 'A-1': { verdict: 'fail' }, 'A-2': { verdict: 'partial' }, 'B-1': { verdict: 'pass' } }, keys);
+  assert.deepEqual(s.A, { total: 2, judged: 2, pass: 0, partial: 1, fail: 1 });
+  assert.deepEqual(s.B, { total: 2, judged: 1, pass: 1, partial: 0, fail: 0 });
+  assert.throws(() => J.validate({ 'C-1': { verdict: 'pass' } }, keys));
+  assert.throws(() => J.validate({ 'A-1': { verdict: 'great' } }, keys));
+  const clean = J.validate({ 'A-1': { verdict: 'pass', note: 'x' }, 'B-1': { verdict: '', note: '' } }, keys);
+  assert.deepEqual(Object.keys(clean), ['A-1']);
+});
+
+test('반복 측정 결과 목록·판정 읽기/저장, 확인 명령 수정', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ablab-r-'));
+  const exp = path.join(root, 'experiments', 'demo');
+  const run = path.join(exp, 'results', '20261021-120000-01-task');
+  fs.mkdirSync(run, { recursive: true });
+  fs.writeFileSync(path.join(exp, 'experiment.json'), '{"name":"demo","model":"m"}');
+  fs.writeFileSync(path.join(run, 'summary.csv'), 'x');
+  fs.writeFileSync(path.join(run, 'conditions.json'), '{"prompt":"01-task","model":"m"}');
+  for (const k of ['A-1', 'B-1']) fs.writeFileSync(path.join(run, `${k}.json`), '{}');
+  fs.writeFileSync(path.join(run, 'A-1-result.md'), '답 A');
+  fs.writeFileSync(path.join(run, 'B-1-changes.txt'), 'M a.txt\nA b.txt\n');
+  fs.writeFileSync(path.join(run, 'B-1-check.txt'), '명령: x\n결과: 통과 · 종료 코드 0');
+
+  const runs = lab.listResultRuns(exp);
+  assert.deepEqual(runs, [{ name: '20261021-120000-01-task', prompt: '01-task', model: 'm', count: 2, judged: 0 }]);
+
+  const data = lab.readRunItems(exp, runs[0].name, seq([0.0]));
+  assert.equal(data.items.length, 2);
+  const b = data.items.find((i) => i.key === 'B-1');
+  assert.deepEqual(b.changes, ['M a.txt', 'A b.txt']);
+  assert.equal(b.check.passed, true);
+  assert.equal(data.items.find((i) => i.key === 'A-1').check, null);
+  // 순서는 저장되어 다음에도 같다
+  assert.deepEqual(lab.readRunItems(exp, runs[0].name).order, data.order);
+
+  const summary = lab.saveJudgments(exp, runs[0].name, { 'B-1': { verdict: 'pass', note: '좋음' } });
+  assert.equal(summary.B.pass, 1);
+  assert.equal(lab.listResultRuns(exp)[0].judged, 1);
+  assert.throws(() => lab.readRunItems(exp, '..'));
+
+  assert.deepEqual(lab.updateExperimentCheck(exp, { command: 'npm test', timeoutSec: 120 }), { command: 'npm test', timeoutSec: 120 });
+  assert.equal(JSON.parse(fs.readFileSync(path.join(exp, 'experiment.json'), 'utf8')).model, 'm');
+  assert.throws(() => lab.updateExperimentCheck(exp, { command: 'x', timeoutSec: 1 }));
+  fs.rmSync(root, { recursive: true, force: true });
+});
 
 test('공통 입력은 수정하지 않은 예비 입력창에만 동기화된다', () => {
   let s = P.initial('작업해줘');
@@ -106,6 +169,9 @@ test('실험 목록과 지시문(변형 포함) 읽기, 세션 기록', () => {
   ]);
   assert.deepEqual(lab.readPrompt(exp, '01-task'), { common: '공통', A: null, B: '공통 + 스킬' });
   assert.throws(() => lab.experimentDir(root, '..\\x'));
+  assert.throws(() => lab.experimentDir(root, '..'));
+  assert.throws(() => lab.experimentDir(root, '.'));
+  assert.ok(lab.experimentDir(root, 'v1.2-test'));
 
   const s = lab.createSession(exp, { experiment: 'demo' });
   s.appendOutput('A', 'abc');
