@@ -1,0 +1,16 @@
+{
+    "name":  "karpathy",
+    "description":  "Karpathy 가이드라인 스킬 유무 비교 (과잉 구현·범위 이탈)",
+    "model":  "claude-opus-5-5",
+    "createdAt":  "2026-10-21",
+    "check":  {
+                  "command":  "npm test && node --test D:/_vibecoding/claudecode-ab-lab/experiments/karpathy/check/hidden-%AB_PROMPT%.test.js",
+                  "timeoutSec":  300
+              },
+    "decision":  {
+                     "minQualityGainPct":  10,
+                     "maxCostIncreasePct":  30,
+                     "maxTimeIncreasePct":  50,
+                     "minTargetRunPct":  50
+                 }
+}

@@ -1,0 +1,13 @@
+{
+    "items":  [
+                  {
+                      "kind":  "local-plugin",
+                      "name":  "andrej-karpathy-skills",
+                      "version":  "1.0.0",
+                      "source":  "https://github.com/forrestchang/andrej-karpathy-skills",
+                      "commit":  "2c606141936f1eeef17fa3043a72095b4765b9c2",
+                      "dirty":  false,
+                      "addedAt":  "2026-10-21T20:27:07"
+                  }
+              ]
+}
