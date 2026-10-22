@@ -46,6 +46,17 @@
 
 결과 등급: `[OK]` 정상 · `[정보]` 확인만 · `[주의]` 비교에 영향 가능 · `[오류]` 고쳐야 함.
 
+## inventory.ps1
+
+| 사용 | 확인 범위 |
+|---|---|
+| `.\inventory.ps1` | A |
+| `.\inventory.ps1 -Exp <이름>` | A와 그 실험의 B, B에만 있는 것 |
+
+- 측정과 같은 인자(`Get-SideLaunch`, 모델만 haiku)로 작업 폴더에서 `claude -p`를 띄워 첫 이벤트(init)를 읽고 바로 끕니다.
+  init은 모델 응답 전에 나오므로 토큰은 거의 쓰지 않습니다.
+- MCP 서버·MCP 도구, 플러그인, 스킬(접두사 없음 = 내장, `anthropic-skills:` = claude.ai 계정, 그 밖 = 플러그인), 에이전트, 내장 도구 수.
+
 ## new-exp.ps1
 
 | 옵션 | 필수 | 설명 |
@@ -114,6 +125,7 @@
 - 지시문 옆에 `<이름>.A.md` / `<이름>.B.md`가 있으면 그쪽에는 변형을 보내고 `conditions.json`의 `promptOverride`에 기록합니다.
 - 시작할 때 A/B 동등성을 점검해 `conditions.json`의 `equivalence`에 남기고, 다르면 경고합니다(측정은 계속).
 - `experiment.json`의 `check.command`가 있으면 매 실행 뒤 작업 폴더에서 실행해 `CheckPassed`와 `<쪽>-<회차>-check.txt`로 기록합니다.
+  확인 명령에는 환경 변수 `AB_PROMPT`(지시문 이름, 예: `01-task`)가 넘어가므로 `hidden-%AB_PROMPT%.test.js`처럼 지시문별 채점을 고를 수 있습니다.
 - `--output-format stream-json --verbose`로 실행해 실제 로드 목록과 스킬·에이전트·MCP 호출, 첫 요청 컨텍스트를 기록합니다(`*-stream.jsonl`, `*-tools.json`, `conditions.json`의 `loaded`·`targets`).
 - 결과 파일 목록은 [usage.md 6절](usage.md#6-반복-측정-근거용)을 보세요.
 - 작업 폴더를 초기화하기 전에, 앱에서 "종료" 없이 닫은 대화형 세션이 있으면 그 결과를 먼저 남깁니다(`save-live.ps1 -Pending`과 같음).

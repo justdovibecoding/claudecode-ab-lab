@@ -147,6 +147,8 @@ try {
             $checkPassed = $null
             if ($checkCmd) {
                 $env:CLAUDE_CONFIG_DIR = $oldConfig
+                # 지시문마다 다른 채점을 고를 수 있게 지시문 이름을 넘긴다(확인 명령에서 %AB_PROMPT%).
+                $env:AB_PROMPT = $promptName
                 $ck = Invoke-CheckCommand $l.Work $checkCmd $checkTimeout
                 $checkPassed = $ck.Passed
                 $status = if ($ck.TimedOut) { "시간 초과($checkTimeout 초)" } else { "종료 코드 $($ck.ExitCode)" }
@@ -189,6 +191,7 @@ try {
     }
 } finally {
     $env:CLAUDE_CONFIG_DIR = $oldConfig
+    Remove-Item Env:AB_PROMPT -ErrorAction SilentlyContinue
     $global:OutputEncoding = $oldOutputEncoding
     [Console]::OutputEncoding = $oldConsoleEncoding
 }

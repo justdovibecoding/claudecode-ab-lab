@@ -84,15 +84,16 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 |---|---|---|
 | 설정 폴더 | `config-vanilla\` (모든 실험이 공용) | `experiments\<이름>\config-B\` (실험마다 따로) |
 | Claude Code 내장 기능·명령 | 포함 | 포함 |
-| claude.ai 계정의 기본 스킬 동기화 (pdf, docx 등) | 포함 | 포함 |
+| claude.ai 계정의 기본 스킬 동기화 (pdf, docx 등) | **제외** (`syncClaudeAiSkills: false`) | **제외** |
+| Claude in Chrome (MCP 도구 22개, 대화형에서만 켜짐) | **제외** (`--no-chrome`) | **제외** |
 | claude.ai 계정의 플러그인 동기화 | **제외** (`syncClaudeAiPlugins: false`) | **제외** |
 | claude.ai 계정 커넥터(MCP) | **제외** (`--strict-mcp-config` + 빈 구성) | **제외** (`mcp-B.json`에 적은 것만) |
 | 평소 `~/.claude`의 플러그인·스킬·훅·메모리 | 제외 | 제외 |
 | 랩 설정 폴더 안에 쌓이는 작업 폴더별 자동 메모리 | 작업 폴더 초기화 때 지움 | 작업 폴더 초기화 때 지움 |
 | 비교 대상 | 없음 | `plugins\`, `skills\`, `/plugin` 설치, `mcp-B.json` |
 
-"기본"을 **Claude Code 단독**(계정 스킬도 제외)으로 잡고 싶으면 `templates\settings.json`과
-`config-vanilla\settings.json`에 `"syncClaudeAiSkills": false`를 추가합니다.
+"기본"은 **Claude Code 단독**입니다. 내장 스킬·내장 플러그인(`cc-plugin-*`)·내장 도구만 남고 MCP는 없습니다.
+실제로 무엇이 붙는지는 `.\inventory.ps1 -Exp <이름>`으로 A/B를 나란히 확인합니다(토큰 거의 0).
 자세한 원리는 [docs/isolation.md](docs/isolation.md)를 보세요.
 
 ## 폴더 구조
@@ -103,6 +104,7 @@ claudecode-ab-lab\
 ├─ setup.ps1          처음 설정(+ 점검)
 ├─ login.ps1          A 또는 실험 B 로그인/로그아웃
 ├─ doctor.ps1         환경 점검
+├─ inventory.ps1      A/B에 실제로 붙는 MCP·스킬·플러그인·에이전트 목록과 차이
 ├─ new-exp.ps1        실험 만들기
 ├─ list-exp.ps1       실험 목록
 ├─ start.ps1          한쪽(A/B) 대화형 실행

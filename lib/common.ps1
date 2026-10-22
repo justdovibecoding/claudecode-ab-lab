@@ -160,7 +160,8 @@ function Get-SideLaunch($Exp, [string]$Side, [string]$Model, [string]$Permission
         $mcp = Join-Path $Exp.Dir 'mcp-B.json'
         Sync-Skills $Exp
     }
-    $cliArgs = @('--model', $Model, '--strict-mcp-config', '--mcp-config', $mcp)
+    # --no-chrome: Claude in Chrome(MCP 도구 22개)은 대화형에서만 켜져 측정과 조건이 달라지므로 양쪽 모두 끈다.
+    $cliArgs = @('--model', $Model, '--strict-mcp-config', '--mcp-config', $mcp, '--no-chrome')
     if ($PermissionMode) { $cliArgs += @('--permission-mode', $PermissionMode) }
     if ($Side -eq 'B') {
         foreach ($p in Get-PluginDirs $Exp) { $cliArgs += @('--plugin-dir', $p.FullName) }

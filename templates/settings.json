@@ -1,5 +1,6 @@
 {
   "theme": "dark",
   "tui": "fullscreen",
-  "syncClaudeAiPlugins": false
+  "syncClaudeAiPlugins": false,
+  "syncClaudeAiSkills": false
 }

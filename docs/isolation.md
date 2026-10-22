@@ -46,19 +46,25 @@
 - 이미 동기화된 플러그인은 다음 시작 때 해당 설정 폴더의 `plugins\.trash\`로 옮겨집니다.
 - 공식 문서: https://code.claude.com/docs/en/settings-reference#syncclaudeaiplugins
 
-### 계정 스킬 → 기본은 포함
+### 계정 스킬 → `syncClaudeAiSkills: false`
 
-`pdf`, `docx`, `xlsx`, `skill-creator` 같은 claude.ai 계정 스킬(`/plugin` Skills 구역의 `claude.ai sync`)은
-같은 계정을 쓰는 일반 사용자도 보게 되는 환경이라 **A/B 모두에 남겨 두는 것이 기본값**입니다.
+`pdf`, `docx`, `xlsx`, `skill-creator` 같은 claude.ai 계정 스킬(`anthropic-skills:*`, `/plugin` Skills 구역의 `claude.ai sync`)은
+A/B 모두에서 **끕니다**(2026-10-21부터). 기준을 "Claude Code 단독"으로 두고, 계정 스킬이 비교 대상 대신 불려 와
+결과를 흐리는 일을 막기 위해서입니다. `templates\settings.json`, `config-vanilla\settings.json`, 각 실험의
+`config-B\settings.json`에 들어 있습니다.
 
-다음 경우에는 끄는 것이 맞습니다.
+```json
+{ "syncClaudeAiSkills": false }
+```
 
-- 비교 대상이 이 스킬들과 겹칠 때(예: 문서 생성 스킬 비교, 스킬 제작 도구 비교).
-  동기화된 `docx`나 `skill-creator`가 대신 불려 와 결과를 흐립니다.
-- "Claude Code 단독"을 기준으로 삼고 싶을 때.
+이 설정 전에 받아 둔 `skills\synced\`는 남아 있어도 로드되지 않습니다(`inventory.ps1`에서 계정 스킬 0개로 확인).
+계정 스킬을 포함한 환경을 기준으로 삼으려면 A와 그 실험의 B에서 함께 `true`로 바꾸세요.
 
-끄는 방법: `templates\settings.json`(새 실험용)과 `config-vanilla\settings.json`, 기존 실험의
-`config-B\settings.json`에 `"syncClaudeAiSkills": false`를 추가합니다.
+### Claude in Chrome → `--no-chrome`
+
+설정 폴더에 Chrome 확장 연결 기록(`claudeInChromeDefaultEnabled`)이 있으면 **대화형 실행에서만** Claude in Chrome
+MCP 도구 22개가 붙습니다. 헤드리스 측정에는 없으므로 대화형과 측정의 조건이 달라집니다.
+스크립트와 앱은 A/B 모두 `--no-chrome`으로 실행해 이를 끕니다(`lib\common.ps1`의 `Get-SideLaunch`).
 
 ### 계정 커넥터(MCP) → `--strict-mcp-config`
 
@@ -115,10 +121,13 @@ Claude Code는 작업 폴더에서 드라이브 루트까지 올라가며 `CLAUD
 
 | 명령 | A에서 기대하는 모습 | B에서 기대하는 모습 |
 |---|---|---|
-| `/plugin` → Installed | Built-in(`cc-plugin-*`)만, 계정 스킬(`claude.ai sync`) | A + 비교 대상 플러그인 |
+| `/plugin` → Installed | Built-in(`cc-plugin-*`)만 | A + 비교 대상 플러그인 |
 | `/mcp` | 서버 없음 | `mcp-B.json`에 적은 서버만 |
 | `/memory` | 불러온 `CLAUDE.md` 없음(실습 원본에 있으면 그것만) | A와 같음 |
 | `/context` | 스킬·메모리·MCP 도구 목록과 토큰 | A + 비교 대상, 토큰 차이 |
 | `/status` | 로그인 방식, 설정 폴더 | 같음 |
 
 `/context`는 A와 B의 차이가 한 화면에 가장 잘 드러나 영상에 쓰기 좋습니다.
+
+실행 화면 밖에서는 `.\inventory.ps1 -Exp <이름>`이 측정과 같은 인자로 양쪽을 띄워 시작 정보(init)만 읽고 끕니다.
+MCP 서버·MCP 도구·플러그인·스킬(내장/계정/플러그인)·에이전트를 나눠 보여 주고, B에만 있는 것을 따로 적습니다.
